@@ -21,7 +21,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/gravitational/teleport/lib/sshutils"
+	"github.com/gravitational/teleport"
 
 	"gopkg.in/check.v1"
 )
@@ -66,7 +66,7 @@ func (s *ClientTestSuite) TestNewSession(c *check.C) {
 
 	// pass environ map
 	env := map[string]string{
-		sshutils.SessionEnvVar: "session-id",
+		teleport.EnvTeleportSessionID: "session-id",
 	}
 	ses, err = newSession(nc, nil, env, nil, nil, nil)
 	c.Assert(err, check.IsNil)

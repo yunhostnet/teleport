@@ -25,6 +25,10 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/websocket"
+
+	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -32,11 +36,9 @@ import (
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/utils"
-
 	"github.com/gravitational/trace"
+
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/net/websocket"
 )
 
 // TerminalRequest describes a request to crate a web-based terminal
@@ -193,7 +195,7 @@ func (t *TerminalHandler) Run(w http.ResponseWriter, r *http.Request) {
 			ProxyHostPort:    t.params.ProxyHostPort,
 			Host:             t.hostName,
 			HostPort:         t.hostPort,
-			Env:              map[string]string{sshutils.SessionEnvVar: string(t.params.SessionID)},
+			Env:              map[string]string{teleport.EnvTeleportSessionID: string(t.params.SessionID)},
 			HostKeyCallback:  func(string, net.Addr, ssh.PublicKey) error { return nil },
 			ClientAddr:       r.RemoteAddr,
 		}

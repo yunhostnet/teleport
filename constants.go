@@ -14,24 +14,49 @@ const (
 	// SSHAuthSock is the environment variable pointing to the
 	// Unix socket the SSH agent is running on.
 	SSHAuthSock = "SSH_AUTH_SOCK"
+
 	// SSHAgentPID is the environment variable pointing to the agent
 	// process ID
 	SSHAgentPID = "SSH_AGENT_PID"
+)
 
+const (
 	// SSHTeleportUser is the current Teleport user that is logged in.
+	// Deprecated: Remove in Teleport 3.0.
 	SSHTeleportUser = "SSH_TELEPORT_USER"
 
 	// SSHSessionWebproxyAddr is the address the web proxy.
+	// Deprecated: Remove in Teleport 3.0.
 	SSHSessionWebproxyAddr = "SSH_SESSION_WEBPROXY_ADDR"
 
 	// SSHTeleportClusterName is the name of the cluster this node belongs to.
+	// Deprecated: Remove in Teleport 3.0.
 	SSHTeleportClusterName = "SSH_TELEPORT_CLUSTER_NAME"
 
 	// SSHTeleportHostUUID is the UUID of the host.
+	// Deprecated: Remove in Teleport 3.0.
 	SSHTeleportHostUUID = "SSH_TELEPORT_HOST_UUID"
 
 	// SSHSessionID is the UUID of the current session.
+	// Deprecated: Remove in Teleport 3.0.
 	SSHSessionID = "SSH_SESSION_ID"
+)
+
+const (
+	// EnvTeleportUser is the current Teleport user that is logged in.
+	EnvTeleportUser = "TELEPORT_USER"
+
+	// EnvTeleportSessionWebproxyAddr is the address the web proxy.
+	EnvTeleportSessionWebproxyAddr = "TELEPORT_SESSION_WEBPROXY_ADDR"
+
+	// EnvTeleportClusterName is the name of the cluster this node belongs to.
+	EnvTeleportClusterName = "TELEPORT_CLUSTER_NAME"
+
+	// EnvTeleportHostUUID is the UUID of the host.
+	EnvTeleportHostUUID = "TELEPORT_HOST_UUID"
+
+	// EnvTeleportSessionID is the UUID of the current session.
+	EnvTeleportSessionID = "TELEPORT_SESSION_ID"
 )
 
 const (

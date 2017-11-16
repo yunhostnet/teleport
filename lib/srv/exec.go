@@ -272,10 +272,6 @@ func prepareCommand(ctx *ServerContext) (*exec.Cmd, error) {
 		"HOME=" + osUser.HomeDir,
 		"USER=" + osUserName,
 		"SHELL=" + shell,
-		teleport.SSHTeleportUser + "=" + ctx.TeleportUser,
-		teleport.SSHSessionWebproxyAddr + "=" + proxyHost,
-		teleport.SSHTeleportHostUUID + "=" + ctx.srv.ID(),
-		teleport.SSHTeleportClusterName + "=" + clusterName,
 	}
 	c.Dir = osUser.HomeDir
 	c.SysProcAttr = &syscall.SysProcAttr{}
@@ -314,7 +310,14 @@ func prepareCommand(ctx *ServerContext) (*exec.Cmd, error) {
 	for n, v := range ctx.env {
 		c.Env = append(c.Env, fmt.Sprintf("%s=%s", n, v))
 	}
-	// apply SSH_xx environment variables
+	// apply teleport specific (TELEPORT_*) environment variables
+	c.Env = append(c.Env, []string{
+		teleport.EnvTeleportUser + "=" + ctx.TeleportUser,
+		teleport.EnvTeleportSessionWebproxyAddr + "=" + proxyHost,
+		teleport.EnvTeleportHostUUID + "=" + ctx.srv.ID(),
+		teleport.EnvTeleportClusterName + "=" + clusterName,
+	}...)
+	// apply ssh specific (SSH_*) environment variables
 	remoteHost, remotePort, err := net.SplitHostPort(ctx.Conn.RemoteAddr().String())
 	if err != nil {
 		log.Warn(err)
@@ -333,7 +336,7 @@ func prepareCommand(ctx *ServerContext) (*exec.Cmd, error) {
 			c.Env = append(c.Env, fmt.Sprintf("SSH_TTY=%s", ctx.session.term.TTY().Name()))
 		}
 		if ctx.session.id != "" {
-			c.Env = append(c.Env, fmt.Sprintf("%s=%s", teleport.SSHSessionID, ctx.session.id))
+			c.Env = append(c.Env, fmt.Sprintf("%s=%s", teleport.EnvTeleportSessionID, ctx.session.id))
 		}
 	}
 

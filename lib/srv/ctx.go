@@ -25,6 +25,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/events"
 	rsession "github.com/gravitational/teleport/lib/session"
@@ -183,7 +184,7 @@ func (c *ServerContext) GetCertificate() (*ssh.Certificate, error) {
 func (c *ServerContext) CreateOrJoinSession(reg *SessionRegistry) error {
 	// As SSH conversation progresses, at some point a session will be created and
 	// its ID will be added to the environment
-	ssid, found := c.GetEnv(sshutils.SessionEnvVar)
+	ssid, found := c.GetEnv(teleport.EnvTeleportSessionID)
 	if !found {
 		return nil
 	}
@@ -267,6 +268,13 @@ func (c *ServerContext) SetEnv(key, val string) {
 
 // GetEnv returns a environment variable within this context.
 func (c *ServerContext) GetEnv(key string) (string, bool) {
+	// to support older versions of Teleport, support old env names for a little
+	// longer.
+	// Deprecated: Remove in Teleport 3.0.
+	if key == sshutils.SessionEnvVar {
+		key = teleport.EnvTeleportSessionID
+	}
+
 	val, ok := c.env[key]
 	return val, ok
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
 	rsession "github.com/gravitational/teleport/lib/session"
-	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/state"
 
 	"github.com/gravitational/trace"
@@ -102,10 +101,10 @@ func (s *SessionRegistry) OpenSession(ch ssh.Channel, req *ssh.Request, ctx *Ser
 		return trace.Wrap(err)
 	}
 	// session not found? need to create one. start by getting/generating an ID for it
-	sid, found := ctx.GetEnv(sshutils.SessionEnvVar)
+	sid, found := ctx.GetEnv(teleport.EnvTeleportSessionID)
 	if !found {
 		sid = string(rsession.NewID())
-		ctx.SetEnv(sshutils.SessionEnvVar, sid)
+		ctx.SetEnv(teleport.EnvTeleportSessionID, sid)
 	}
 	// This logic allows concurrent request to create a new session
 	// to fail, what is ok because we should never have this condition

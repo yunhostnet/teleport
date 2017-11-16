@@ -83,6 +83,7 @@ type SubsystemReq struct {
 
 const (
 	// SessionEnvVar is environment variable for SSH session
+	// Deprecated: Remove in Teleport 3.0.
 	SessionEnvVar = "TELEPORT_SESSION"
 	// SetEnvReq sets environment requests
 	SetEnvReq = "env"

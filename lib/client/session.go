@@ -115,13 +115,13 @@ func newSession(client *NodeClient,
 		}
 		// new session!
 	} else {
-		sid, ok := ns.env[sshutils.SessionEnvVar]
+		sid, ok := ns.env[teleport.EnvTeleportSessionID]
 		if !ok {
 			sid = string(session.NewID())
 		}
 		ns.id = session.ID(sid)
 	}
-	ns.env[sshutils.SessionEnvVar] = string(ns.id)
+	ns.env[teleport.EnvTeleportSessionID] = string(ns.id)
 	return ns, nil
 }
 

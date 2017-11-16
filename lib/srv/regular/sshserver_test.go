@@ -361,7 +361,7 @@ func (s *SrvSuite) TestInvalidSessionID(c *C) {
 	session, err := s.clt.NewSession()
 	c.Assert(err, IsNil)
 
-	err = session.Setenv(sshutils.SessionEnvVar, "foo")
+	err = session.Setenv(teleport.EnvTeleportSessionID, "foo")
 	c.Assert(err, IsNil)
 
 	err = session.Shell()
@@ -396,7 +396,7 @@ func (s *SrvSuite) TestSessionHijack(c *C) {
 	defer se.Close()
 
 	firstSessionID := string(sess.NewID())
-	err = se.Setenv(sshutils.SessionEnvVar, firstSessionID)
+	err = se.Setenv(teleport.EnvTeleportSessionID, firstSessionID)
 	c.Assert(err, IsNil)
 
 	err = se.Shell()
@@ -422,7 +422,7 @@ func (s *SrvSuite) TestSessionHijack(c *C) {
 	c.Assert(err, IsNil)
 	defer se2.Close()
 
-	err = se2.Setenv(sshutils.SessionEnvVar, firstSessionID)
+	err = se2.Setenv(teleport.EnvTeleportSessionID, firstSessionID)
 	c.Assert(err, IsNil)
 
 	// attempt to hijack, should return error

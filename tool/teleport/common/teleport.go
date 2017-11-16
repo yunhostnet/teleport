@@ -218,11 +218,11 @@ func onStart(config *service.Config) error {
 func onStatus() error {
 	sshClient := os.Getenv("SSH_CLIENT")
 	systemUser := os.Getenv("USER")
-	teleportUser := os.Getenv(teleport.SSHTeleportUser)
-	proxyHost := os.Getenv(teleport.SSHSessionWebproxyAddr)
-	clusterName := os.Getenv(teleport.SSHTeleportClusterName)
-	hostUUID := os.Getenv(teleport.SSHTeleportHostUUID)
-	sid := os.Getenv(teleport.SSHSessionID)
+	teleportUser := os.Getenv(teleport.EnvTeleportUser)
+	proxyHost := os.Getenv(teleport.EnvTeleportSessionWebproxyAddr)
+	clusterName := os.Getenv(teleport.EnvTeleportClusterName)
+	hostUUID := os.Getenv(teleport.EnvTeleportHostUUID)
+	sid := os.Getenv(teleport.EnvTeleportSessionID)
 
 	if sid == "" || proxyHost == "" {
 		fmt.Println("You are not inside of a Teleport SSH session")
