@@ -357,6 +357,56 @@ func readIndexEntries(file *os.File, authServer string) (events []indexEntry, ch
 // to receive a live stream of a given session. The reader allows access to a
 // session stream range from offsetBytes to offsetBytes+maxBytes
 func (l *AuditLog) GetSessionChunk(namespace string, sid session.ID, offsetBytes, maxBytes int) ([]byte, error) {
+	var data []byte
+	for {
+		out, err := l.getSessionChunk(namespace, sid, offsetBytes, maxBytes)
+		if err != nil {
+			if err == io.EOF {
+				return data, nil
+			}
+			return nil, trace.Wrap(err)
+		}
+		data = append(data, out...)
+		if len(data) == maxBytes || len(out) == 0 {
+			return data, nil
+		}
+		maxBytes = maxBytes - len(data)
+		offsetBytes = offsetBytes + len(data)
+	}
+}
+
+func (l *AuditLog) getSessionChunk(namespace string, sid session.ID, offsetBytes, maxBytes int) ([]byte, error) {
+	if namespace == "" {
+		return nil, trace.BadParameter("missing parameter namespace")
+	}
+	idx, err := l.readSessionIndex(namespace, sid)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	fileName, fileOffset, err := idx.chunksFile(int64(offsetBytes))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	fstream, err := os.OpenFile(fileName, os.O_RDONLY, 0640)
+	if err != nil {
+		log.Warning(err)
+		return nil, trace.Wrap(err)
+	}
+	defer fstream.Close()
+
+	// seek to 'offset' from the beginning
+	fstream.Seek(int64(offsetBytes)-fileOffset, 0)
+
+	// copy up to maxBytes from the offset position:
+	var buff bytes.Buffer
+	io.Copy(&buff, io.LimitReader(fstream, int64(maxBytes)))
+	return buff.Bytes(), nil
+}
+
+// GetSessionChunk returns a reader which console and web clients request
+// to receive a live stream of a given session. The reader allows access to a
+// session stream range from offsetBytes to offsetBytes+maxBytes
+func (l *AuditLog) GetSessionChunkOld(namespace string, sid session.ID, offsetBytes, maxBytes int) ([]byte, error) {
 	if namespace == "" {
 		return nil, trace.BadParameter("missing parameter namespace")
 	}
