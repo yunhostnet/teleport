@@ -35,6 +35,9 @@ const (
 	RemoteAddr  = "addr.remote" // client (user's) address
 	EventCursor = "id"          // event ID (used as cursor value for enumeration, not stored)
 
+	// EventIndex is an event index as received from the logging server
+	EventIndex = "ei"
+
 	// EventNamespace is a namespace of the session event
 	EventNamespace = "namespace"
 

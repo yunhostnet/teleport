@@ -390,6 +390,7 @@ func (process *TeleportProcess) initAuthService(authority sshca.Authority) error
 		auditConfig := events.AuditLogConfig{
 			DataDir:        filepath.Join(cfg.DataDir, "log"),
 			RecordSessions: recordSessions,
+			ServerID:       cfg.HostUUID,
 		}
 		if runtime.GOOS == teleport.LinuxOS {
 			// if the user member of adm linux group,

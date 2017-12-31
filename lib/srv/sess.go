@@ -89,7 +89,7 @@ func (r *SessionRegistry) Close() {
 func (s *SessionRegistry) OpenSession(ch ssh.Channel, req *ssh.Request, ctx *ServerContext) error {
 	if ctx.session != nil {
 		// emit "joined session" event:
-		s.srv.EmitAuditEvent(events.SessionJoinEvent, events.EventFields{
+		ctx.session.recorder.alog.EmitAuditEvent(events.SessionJoinEvent, events.EventFields{
 			events.SessionEventID:  string(ctx.session.id),
 			events.EventNamespace:  s.srv.GetNamespace(),
 			events.EventLogin:      ctx.Identity.Login,
@@ -137,7 +137,7 @@ func (s *SessionRegistry) leaveSession(party *party) error {
 	}
 
 	// emit "session leave" event (party left the session)
-	s.srv.EmitAuditEvent(events.SessionLeaveEvent, events.EventFields{
+	sess.recorder.alog.EmitAuditEvent(events.SessionLeaveEvent, events.EventFields{
 		events.SessionEventID:  string(sess.id),
 		events.EventUser:       party.user,
 		events.SessionServerID: party.serverID,
@@ -165,18 +165,19 @@ func (s *SessionRegistry) leaveSession(party *party) error {
 		delete(s.sessions, sess.id)
 		s.Unlock()
 
+		// send an event indicating that this session has ended
+		sess.recorder.alog.EmitAuditEvent(events.SessionEndEvent, events.EventFields{
+			events.SessionEventID: string(sess.id),
+			events.EventUser:      party.user,
+			events.EventNamespace: s.srv.GetNamespace(),
+		})
+
 		// close recorder to free up associated resources
 		// and flush data
 		if sess.recorder != nil {
 			sess.recorder.Close()
 		}
 
-		// send an event indicating that this session has ended
-		s.srv.EmitAuditEvent(events.SessionEndEvent, events.EventFields{
-			events.SessionEventID: string(sess.id),
-			events.EventUser:      party.user,
-			events.EventNamespace: s.srv.GetNamespace(),
-		})
 		if err := sess.Close(); err != nil {
 			log.Error(err)
 		}
@@ -220,7 +221,7 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 	}
 	sid := ctx.session.id
 	// report this to the event/audit log:
-	s.srv.EmitAuditEvent(events.ResizeEvent, events.EventFields{
+	ctx.session.recorder.alog.EmitAuditEvent(events.ResizeEvent, events.EventFields{
 		events.EventNamespace: s.srv.GetNamespace(),
 		events.SessionEventID: sid,
 		events.EventLogin:     ctx.Identity.Login,
@@ -582,18 +583,6 @@ func (s *session) start(ch ssh.Channel, ctx *ServerContext) error {
 
 	params := s.term.GetTerminalParams()
 
-	// emit "new session created" event:
-	s.registry.srv.EmitAuditEvent(events.SessionStartEvent, events.EventFields{
-		events.EventNamespace:  ctx.srv.GetNamespace(),
-		events.SessionEventID:  string(s.id),
-		events.SessionServerID: ctx.srv.ID(),
-		events.EventLogin:      ctx.Identity.Login,
-		events.EventUser:       ctx.Identity.TeleportUser,
-		events.LocalAddr:       ctx.Conn.LocalAddr().String(),
-		events.RemoteAddr:      ctx.Conn.RemoteAddr().String(),
-		events.TerminalSize:    params.Serialize(),
-	})
-
 	// start recording this session
 	auditLog := s.registry.srv.GetAuditLog()
 	if auditLog != nil {
@@ -604,6 +593,18 @@ func (s *session) start(ch ssh.Channel, ctx *ServerContext) error {
 		}
 		s.writer.addWriter("session-recorder", s.recorder, true)
 	}
+
+	// emit "new session created" event:
+	s.recorder.alog.EmitAuditEvent(events.SessionStartEvent, events.EventFields{
+		events.EventNamespace:  ctx.srv.GetNamespace(),
+		events.SessionEventID:  string(s.id),
+		events.SessionServerID: ctx.srv.ID(),
+		events.EventLogin:      ctx.Identity.Login,
+		events.EventUser:       ctx.Identity.TeleportUser,
+		events.LocalAddr:       ctx.Conn.LocalAddr().String(),
+		events.RemoteAddr:      ctx.Conn.RemoteAddr().String(),
+		events.TerminalSize:    params.Serialize(),
+	})
 
 	// start asynchronous loop of synchronizing session state with
 	// the session server (terminal size and activity)
