@@ -360,6 +360,7 @@ func (l *AuditLog) GetSessionChunk(namespace string, sid session.ID, offsetBytes
 	var data []byte
 	for {
 		out, err := l.getSessionChunk(namespace, sid, offsetBytes, maxBytes)
+		l.Debugf("l.getSessionChunk(sid: %v, offsetBytes: %v, maxBytes: %v) -> %v", sid, offsetBytes, maxBytes, len(out))
 		if err != nil {
 			if err == io.EOF {
 				return data, nil
@@ -368,10 +369,11 @@ func (l *AuditLog) GetSessionChunk(namespace string, sid session.ID, offsetBytes
 		}
 		data = append(data, out...)
 		if len(data) == maxBytes || len(out) == 0 {
+			l.Debugf("l.GetSessionChunk(sid: %v, offsetBytes: %v, maxBytes: %v) -> %v", sid, offsetBytes, maxBytes, len(data))
 			return data, nil
 		}
-		maxBytes = maxBytes - len(data)
-		offsetBytes = offsetBytes + len(data)
+		maxBytes = maxBytes - len(out)
+		offsetBytes = offsetBytes + len(out)
 	}
 }
 
