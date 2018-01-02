@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -597,10 +598,114 @@ func (l *AuditLog) matchingFiles(fromUTC, toUTC time.Time) ([]eventFile, error) 
 			}
 		}
 	}
-
-	// sort all accepted  files by date
+	// sort all accepted files by date
 	sort.Sort(byDate(filtered))
 	return filtered, nil
+}
+
+func (l *AuditLog) moveAuditLogFile(fileName string) error {
+	sourceFile := filepath.Join(l.DataDir, fileName)
+	targetFile := filepath.Join(l.DataDir, l.ServerID, fileName)
+	l.Infof("Migrating log file from %v to %v", sourceFile, targetFile)
+	if err := os.Rename(sourceFile, targetFile); err != nil {
+		return trace.ConvertSystemError(err)
+	}
+	return nil
+}
+
+func (l *AuditLog) moveSessionsDir() error {
+	sessionDir := filepath.Join(l.DataDir, SessionLogsDir)
+	targetDir := filepath.Join(l.DataDir, l.ServerID, SessionLogsDir)
+	_, err := utils.StatDir(targetDir)
+	if err == nil {
+		return nil
+	}
+	if !trace.IsNotFound(err) {
+		return trace.Wrap(err)
+	}
+	l.Infof("Migrating sessions from %v to %v", sessionDir, targetDir)
+	if err := os.Rename(sessionDir, targetDir); err != nil {
+		return trace.ConvertSystemError(err)
+	}
+	return nil
+}
+
+func listDir(dir string) ([]os.FileInfo, error) {
+	df, err := os.Open(dir)
+	if err != nil {
+		return nil, trace.ConvertSystemError(err)
+	}
+	defer df.Close()
+	entries, err := df.Readdir(-1)
+	if err != nil {
+		return nil, trace.ConvertSystemError(err)
+	}
+	return entries, nil
+}
+
+// DELETE IN: 2.6.0
+// RunMigrations runs migrations for audit logs format
+func (l *AuditLog) RunMigrations() error {
+	// move sessions directory
+	if err := l.moveSessionsDir(); err != nil {
+		return trace.Wrap(err)
+	}
+	fileInfos, err := listDir(l.DataDir)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	for _, fi := range fileInfos {
+		if !fi.IsDir() {
+			if err := l.moveAuditLogFile(fi.Name()); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+	}
+	// transform the recorded files to the new index format
+	recordingsDir := filepath.Join(l.DataDir, SessionLogsDir, defaults.Namespace)
+	fileInfos, err = listDir(recordingsDir)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	for _, fi := range fileInfos {
+		if fi.IsDir() {
+			l.Debugf("Migrating, skipping directory %v", fi.Name())
+			continue
+		}
+		parts := strings.Split(fi.Name(), ".")
+		if len(parts) < 2 {
+			l.Debugf("Migrating, skipping unknown file: %v", fi.Name())
+		}
+		sessionID := parts[0]
+		sourceEventsFile := filepath.Join(recordingsDir, fmt.Sprintf("%v.session.log", sessionID))
+		targetEventsFile := filepath.Join(recordingsDir, fmt.Sprintf("%v-0.events", sessionID))
+		l.Debugf("Migrating, session ID %v. Renamed %v to %v", sessionID, sourceEventsFile, targetEventsFile)
+		err := os.Rename(sourceEventsFile, targetEventsFile)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		sourceChunksFile := filepath.Join(recordingsDir, fmt.Sprintf("%v.session.bytes", sessionID))
+		targetChunksFile := filepath.Join(recordingsDir, fmt.Sprintf("%v-0.chunks", sessionID))
+		l.Debugf("Migrating session ID %v. Renamed %v to %v", sessionID, sourceChunksFile, targetChunksFile)
+		err = os.Rename(sourceChunksFile, targetChunksFile)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		indexFileName := filepath.Join(recordingsDir, fmt.Sprintf("%v.index", sessionID))
+		err = ioutil.WriteFile(indexFileName,
+			[]byte(
+				fmt.Sprintf(`%v\n%v\n`,
+					filepath.Base(targetEventsFile),
+					filepath.Base(targetChunksFile),
+				)),
+			0640,
+		)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		l.Debugf("Migrating session ID %v. Wrote index file %v.", indexFileName)
+	}
+	return nil
 }
 
 // SearchEvents finds events. Results show up sorted by date (newest first)
