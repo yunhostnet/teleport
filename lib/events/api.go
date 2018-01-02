@@ -125,6 +125,14 @@ const (
 	MaxChunkBytes = 1024 * 1024 * 5
 )
 
+const (
+	// V1 is the V1 version of slice chunks API,
+	// it is 0 because it was not defined before
+	V1 = 0
+	// V2 is the V2 version of slice chunks  API
+	V2 = 2
+)
+
 // IAuditLog is the primary (and the only external-facing) interface for AuditLogger.
 // If you wish to implement a different kind of logger (not filesystem-based), you
 // have to implement this interface

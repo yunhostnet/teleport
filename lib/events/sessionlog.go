@@ -102,8 +102,7 @@ type DiskSessionLogger struct {
 
 	sid session.ID
 
-	indexFile *os.File
-
+	indexFile  *os.File
 	eventsFile *os.File
 	chunksFile *os.File
 
@@ -150,6 +149,16 @@ func (sl *DiskSessionLogger) Finalize() error {
 	return nil
 }
 
+// eventsFileName consists of session id and the first global event index recorded there
+func eventsFileName(dataDir string, sessionID session.ID, eventIndex int64) string {
+	return filepath.Join(dataDir, fmt.Sprintf("%v-%v.events", sessionID.String(), eventIndex))
+}
+
+// chunksFileName consists of session id and the first global offset recorded
+func chunksFileName(dataDir string, sessionID session.ID, offset int64) string {
+	return filepath.Join(dataDir, fmt.Sprintf("%v-%v.chunks", sessionID.String(), offset))
+}
+
 func (sl *DiskSessionLogger) openEventsFile(eventIndex int64) error {
 	if sl.eventsFile != nil {
 		err := sl.eventsFile.Close()
@@ -157,8 +166,7 @@ func (sl *DiskSessionLogger) openEventsFile(eventIndex int64) error {
 			sl.Warningf("Failed to close file: %v", trace.DebugReport(err))
 		}
 	}
-	// eventsFileName consists of session id and the first global event index recorded there
-	eventsFileName := filepath.Join(sl.DataDir, fmt.Sprintf("%v-%v.events", sl.SessionID.String(), eventIndex))
+	eventsFileName := eventsFileName(sl.DataDir, sl.SessionID, eventIndex)
 
 	// udpate the index file to write down that new events file has been created
 	data, err := json.Marshal(indexEntry{
@@ -190,8 +198,7 @@ func (sl *DiskSessionLogger) openChunksFile(offset int64) error {
 			sl.Warningf("Failed to close file: %v", trace.DebugReport(err))
 		}
 	}
-	// chunksFileName consists of session id and the first global offset recorded
-	chunksFileName := filepath.Join(sl.DataDir, fmt.Sprintf("%v-%v.chunks", sl.SessionID.String(), offset))
+	chunksFileName := chunksFileName(sl.DataDir, sl.SessionID, offset)
 
 	// udpate the index file to write down that new chunks file has been created
 	data, err := json.Marshal(indexEntry{
@@ -246,7 +253,7 @@ func (sl *DiskSessionLogger) WriteChunk(chunk *SessionChunk) (written int, err e
 		if err != nil {
 			return -1, trace.Wrap(err)
 		}
-		if err := sl.AuditLog.EmitAuditEvent(chunk.EventType, fields); err != nil {
+		if err := sl.AuditLog.emitAuditEvent(chunk.EventType, fields); err != nil {
 			return -1, trace.Wrap(err)
 		}
 		return fmt.Fprintln(sl.eventsFile, string(data))

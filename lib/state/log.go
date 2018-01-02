@@ -336,6 +336,7 @@ func (ll *CachingAuditLog) flush(opts flushOpts) {
 		Namespace: ll.Namespace,
 		SessionID: ll.SessionID,
 		Chunks:    chunks,
+		Version:   events.V2,
 	}
 	err := ll.postSlice(slice)
 	if err == nil {
