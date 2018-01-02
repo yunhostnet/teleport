@@ -406,14 +406,10 @@ func (process *TeleportProcess) initAuthService(authority sshca.Authority) error
 				auditConfig.GID = &gid
 			}
 		}
-		auditLog, err := events.NewAuditLog(auditConfig)
+		process.auditLog, err = events.NewAuditLog(auditConfig)
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		if err := auditLog.RunMigrations(); err != nil {
-			return trace.Wrap(err)
-		}
-		process.auditLog = auditLog
 	}
 
 	// first, create the AuthServer

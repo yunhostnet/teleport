@@ -161,22 +161,6 @@ func NewAuditLog(cfg AuditLogConfig) (*AuditLog, error) {
 	if err := cfg.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}
-	// create a directory for session logs:
-	sessionDir := filepath.Join(cfg.DataDir, cfg.ServerID, SessionLogsDir)
-	if err := os.MkdirAll(sessionDir, *cfg.DirMask); err != nil {
-		return nil, trace.ConvertSystemError(err)
-	}
-
-	if cfg.UID != nil && cfg.GID != nil {
-		err := os.Chown(cfg.DataDir, *cfg.UID, *cfg.GID)
-		if err != nil {
-			return nil, trace.ConvertSystemError(err)
-		}
-		err = os.Chown(sessionDir, *cfg.UID, *cfg.GID)
-		if err != nil {
-			return nil, trace.ConvertSystemError(err)
-		}
-	}
 
 	al := &AuditLog{
 		AuditLogConfig: cfg,
@@ -190,6 +174,32 @@ func NewAuditLog(cfg AuditLogConfig) (*AuditLog, error) {
 		return nil, trace.Wrap(err)
 	}
 	al.loggers = loggers
+	// create a directory for audit logs, audit log does not create
+	// session logs before migrations are run in case if the directory
+	// has to be moved
+	auditDir := filepath.Join(cfg.DataDir, cfg.ServerID)
+	if err := os.MkdirAll(auditDir, *cfg.DirMask); err != nil {
+		return nil, trace.ConvertSystemError(err)
+	}
+	if err := al.runMigrations(); err != nil {
+		return nil, trace.Wrap(err)
+	}
+	// create a directory for session logs:
+	sessionDir := filepath.Join(cfg.DataDir, cfg.ServerID, SessionLogsDir)
+	if err := os.MkdirAll(sessionDir, *cfg.DirMask); err != nil {
+		return nil, trace.ConvertSystemError(err)
+	}
+	if cfg.UID != nil && cfg.GID != nil {
+		err := os.Chown(cfg.DataDir, *cfg.UID, *cfg.GID)
+		if err != nil {
+			return nil, trace.ConvertSystemError(err)
+		}
+		err = os.Chown(sessionDir, *cfg.UID, *cfg.GID)
+		if err != nil {
+			return nil, trace.ConvertSystemError(err)
+		}
+	}
+
 	go al.periodicCloseInactiveLoggers()
 	return al, nil
 }
@@ -613,7 +623,7 @@ func (l *AuditLog) moveAuditLogFile(fileName string) error {
 	return nil
 }
 
-func (l *AuditLog) moveSessionsDir() error {
+func (l *AuditLog) migrateSessionsDir() error {
 	sessionDir := filepath.Join(l.DataDir, SessionLogsDir)
 	targetDir := filepath.Join(l.DataDir, l.ServerID, SessionLogsDir)
 	_, err := utils.StatDir(targetDir)
@@ -623,47 +633,9 @@ func (l *AuditLog) moveSessionsDir() error {
 	if !trace.IsNotFound(err) {
 		return trace.Wrap(err)
 	}
-	l.Infof("Migrating sessions from %v to %v", sessionDir, targetDir)
-	if err := os.Rename(sessionDir, targetDir); err != nil {
-		return trace.ConvertSystemError(err)
-	}
-	return nil
-}
-
-func listDir(dir string) ([]os.FileInfo, error) {
-	df, err := os.Open(dir)
-	if err != nil {
-		return nil, trace.ConvertSystemError(err)
-	}
-	defer df.Close()
-	entries, err := df.Readdir(-1)
-	if err != nil {
-		return nil, trace.ConvertSystemError(err)
-	}
-	return entries, nil
-}
-
-// DELETE IN: 2.6.0
-// RunMigrations runs migrations for audit logs format
-func (l *AuditLog) RunMigrations() error {
-	// move sessions directory
-	if err := l.moveSessionsDir(); err != nil {
-		return trace.Wrap(err)
-	}
-	fileInfos, err := listDir(l.DataDir)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	for _, fi := range fileInfos {
-		if !fi.IsDir() {
-			if err := l.moveAuditLogFile(fi.Name()); err != nil {
-				return trace.Wrap(err)
-			}
-		}
-	}
 	// transform the recorded files to the new index format
 	recordingsDir := filepath.Join(l.DataDir, SessionLogsDir, defaults.Namespace)
-	fileInfos, err = listDir(recordingsDir)
+	fileInfos, err := listDir(recordingsDir)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -672,6 +644,14 @@ func (l *AuditLog) RunMigrations() error {
 			l.Debugf("Migrating, skipping directory %v", fi.Name())
 			continue
 		}
+
+		// only trigger migrations on .log
+		// to avoid double migrations attempts or migrating recordings
+		// that were already migrated
+		if !strings.HasSuffix(fi.Name(), "session.log") {
+			continue
+		}
+
 		parts := strings.Split(fi.Name(), ".")
 		if len(parts) < 2 {
 			l.Debugf("Migrating, skipping unknown file: %v", fi.Name())
@@ -692,11 +672,30 @@ func (l *AuditLog) RunMigrations() error {
 			return trace.Wrap(err)
 		}
 		indexFileName := filepath.Join(recordingsDir, fmt.Sprintf("%v.index", sessionID))
+
+		eventsData, err := json.Marshal(indexEntry{
+			FileName: filepath.Base(targetEventsFile),
+			Type:     fileTypeEvents,
+			Index:    0,
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		chunksData, err := json.Marshal(indexEntry{
+			FileName: filepath.Base(targetChunksFile),
+			Type:     fileTypeChunks,
+			Offset:   0,
+		})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
 		err = ioutil.WriteFile(indexFileName,
 			[]byte(
-				fmt.Sprintf(`%v\n%v\n`,
-					filepath.Base(targetEventsFile),
-					filepath.Base(targetChunksFile),
+				fmt.Sprintf("%v\n%v\n",
+					string(eventsData),
+					string(chunksData),
 				)),
 			0640,
 		)
@@ -705,6 +704,46 @@ func (l *AuditLog) RunMigrations() error {
 		}
 		l.Debugf("Migrating session ID %v. Wrote index file %v.", indexFileName)
 	}
+	l.Infof("Moving sessions folder from %v to %v", sessionDir, targetDir)
+	if err := os.Rename(sessionDir, targetDir); err != nil {
+		return trace.ConvertSystemError(err)
+	}
+	return nil
+}
+
+func listDir(dir string) ([]os.FileInfo, error) {
+	df, err := os.Open(dir)
+	if err != nil {
+		return nil, trace.ConvertSystemError(err)
+	}
+	defer df.Close()
+	entries, err := df.Readdir(-1)
+	if err != nil {
+		return nil, trace.ConvertSystemError(err)
+	}
+	return entries, nil
+}
+
+// DELETE IN: 2.6.0
+// runMigrations runs migrations for audit logs format
+func (l *AuditLog) runMigrations() error {
+	// migrate sessions directory
+	if err := l.migrateSessionsDir(); err != nil {
+		return trace.Wrap(err)
+	}
+	// move audit log files to the auth server id
+	fileInfos, err := listDir(l.DataDir)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	for _, fi := range fileInfos {
+		if !fi.IsDir() {
+			if err := l.moveAuditLogFile(fi.Name()); err != nil {
+				return trace.Wrap(err)
+			}
+		}
+	}
+
 	return nil
 }
 

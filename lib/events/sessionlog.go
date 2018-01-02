@@ -229,8 +229,6 @@ func (sl *DiskSessionLogger) WriteChunk(chunk *SessionChunk) (written int, err e
 	sl.Lock()
 	defer sl.Unlock()
 
-	sl.Debugf("got chunk: type: %v event index: %v chunk index: %v", chunk.EventType, chunk.EventIndex, chunk.ChunkIndex)
-
 	// this section enforces the following invariant:
 	// a single events file only contains successive events
 	if sl.lastEventIndex == -1 || chunk.EventIndex-1 != sl.lastEventIndex {
