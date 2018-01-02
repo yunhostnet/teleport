@@ -256,6 +256,9 @@ func (sl *DiskSessionLogger) WriteChunk(chunk *SessionChunk) (written int, err e
 		}
 		return fmt.Fprintln(sl.eventsFile, string(data))
 	}
+	if !sl.RecordSessions {
+		return len(chunk.Data), nil
+	}
 	eventStart := time.Unix(0, chunk.Time).In(time.UTC).Round(time.Millisecond)
 	// this section enforces the following invariant:
 	// a single chunks file only contains successive chunks
