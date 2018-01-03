@@ -102,21 +102,26 @@ type CompatSessionLogger struct {
 }
 
 // LogEvent logs an event associated with this session
-func (sl *CompatSessionLogger) LogEvent(fields EventFields) {
+func (sl *CompatSessionLogger) LogEvent(fields EventFields) error {
+	if err := sl.openEventsFile(); err != nil {
+		return trace.Wrap(err)
+	}
+
 	if _, ok := fields[EventTime]; !ok {
 		fields[EventTime] = sl.Clock.Now().In(time.UTC).Round(time.Millisecond)
 	}
 
-	if sl.eventsFile != nil {
-		data, err := json.Marshal(fields)
-		if err != nil {
-			log.Warningf("Failed to log event: %v", err)
-		}
-		_, err = fmt.Fprintln(sl.eventsFile, string(data))
-		if err != nil {
-			log.Warningf("Failed to log event: %v", err)
-		}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return trace.Wrap(err)
 	}
+
+	_, err = fmt.Fprintln(sl.eventsFile, string(data))
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	return nil
 }
 
 // readLastEvent reads last event from the file, it opens

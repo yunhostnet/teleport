@@ -373,7 +373,6 @@ func (l *AuditLog) GetSessionChunk(namespace string, sid session.ID, offsetBytes
 	var data []byte
 	for {
 		out, err := l.getSessionChunk(namespace, sid, offsetBytes, maxBytes)
-		l.Debugf("l.getSessionChunk(sid: %v, offsetBytes: %v, maxBytes: %v) -> %v", sid, offsetBytes, maxBytes, len(out))
 		if err != nil {
 			if err == io.EOF {
 				return data, nil
@@ -382,7 +381,6 @@ func (l *AuditLog) GetSessionChunk(namespace string, sid session.ID, offsetBytes
 		}
 		data = append(data, out...)
 		if len(data) == maxBytes || len(out) == 0 {
-			l.Debugf("l.GetSessionChunk(sid: %v, offsetBytes: %v, maxBytes: %v) -> %v", sid, offsetBytes, maxBytes, len(data))
 			return data, nil
 		}
 		maxBytes = maxBytes - len(out)
@@ -528,17 +526,16 @@ func (l *AuditLog) EmitAuditEvent(eventType string, fields EventFields) error {
 	// if this event is associated with a session -> forward it to the session log as well
 	// this means that this is a legacy client, so audit logger is going to use compatibility mode logger
 	sessionID := fields.GetString(SessionEventID)
+
 	if sessionID != "" {
 		sl, err := l.LoggerFor(fields.GetString(EventNamespace), session.ID(sessionID), true)
 		if err == nil {
-			sl.LogEvent(fields)
-
+			if err := sl.LogEvent(fields); err != nil {
+				l.Warningf("Failed to log event: %v.", err)
+			}
 			// Session ended? Get rid of the session logger then:
 			if eventType == SessionEndEvent {
-				l.Debugf("removing session logger for SID=%v", sessionID)
-				l.Lock()
-				l.loggers.Remove(sessionID)
-				l.Unlock()
+				l.removeLogger(sessionID)
 				if err := sl.Finalize(); err != nil {
 					log.Error(err)
 				}
@@ -548,6 +545,13 @@ func (l *AuditLog) EmitAuditEvent(eventType string, fields EventFields) error {
 		}
 	}
 	return nil
+}
+
+func (l *AuditLog) removeLogger(sessionID string) {
+	l.Debugf("Removing session logger for SID=%v.", sessionID)
+	l.Lock()
+	defer l.Unlock()
+	l.loggers.Remove(sessionID)
 }
 
 // emitAuditEvent adds a new event to the log. Part of auth.IAuditLog interface.
@@ -637,7 +641,11 @@ func (l *AuditLog) migrateSessionsDir() error {
 	recordingsDir := filepath.Join(l.DataDir, SessionLogsDir, defaults.Namespace)
 	fileInfos, err := listDir(recordingsDir)
 	if err != nil {
-		return trace.Wrap(err)
+		// source directory does not exist, means nothing to migrate
+		if !trace.IsNotFound(err) {
+			return trace.Wrap(err)
+		}
+		return nil
 	}
 	for _, fi := range fileInfos {
 		if fi.IsDir() {
@@ -806,7 +814,7 @@ func (f byDate) Swap(i, j int)      { f[i], f[j] = f[j], f[i] }
 //
 // You can pass multiple types like "event=session.start&event=session.end"
 func (l *AuditLog) findInFile(fn string, query url.Values) ([]EventFields, error) {
-	l.Infof("findInFile(%s, %v)", fn, query)
+	l.Infof("Called findInFile(%s, %v).", fn, query)
 	retval := make([]EventFields, 0)
 
 	eventFilter := query[EventType]
@@ -941,6 +949,7 @@ func (l *AuditLog) LoggerFor(namespace string, sid session.ID, compatibilityMode
 	// DELETE IN: 2.6.0
 	// Compatibility mode is required for migration from 2.5.0 to 2.6.0
 	if compatibilityMode {
+		l.Debugf("Using compatibility mode logger for session id %v.", sid)
 		sessionLogger, err := NewCompatSessionLogger(CompatSessionLoggerConfig{
 			SessionID:      sid,
 			DataDir:        sdir,
@@ -976,14 +985,14 @@ func (l *AuditLog) asyncCloseSessionLogger(key string, val interface{}) {
 }
 
 func (l *AuditLog) closeSessionLogger(key string, val interface{}) {
-	l.Debugf("closing session logger %v", key)
+	l.Debugf("Closing session logger %v.", key)
 	logger, ok := val.(SessionLogger)
 	if !ok {
-		l.Warningf("warning, not valid value type %T for %v", val, key)
+		l.Warningf("Warning, not valid value type %T for %v.", val, key)
 		return
 	}
 	if err := logger.Finalize(); err != nil {
-		log.Warningf("failed to finalize: %v", trace.DebugReport(err))
+		log.Warningf("Failed to finalize: %v.", trace.DebugReport(err))
 	}
 }
 
@@ -1005,6 +1014,6 @@ func (l *AuditLog) closeInactiveLoggers() {
 
 	expired := l.loggers.RemoveExpired(10)
 	if expired != 0 {
-		l.Debugf("closed %v inactive session loggers", expired)
+		l.Debugf("Closed %v inactive session loggers.", expired)
 	}
 }

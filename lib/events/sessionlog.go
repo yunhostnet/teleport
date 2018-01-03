@@ -34,7 +34,7 @@ import (
 // SessionLogger is an interface that all session loggers must implement.
 type SessionLogger interface {
 	// LogEvent logs events associated with this session.
-	LogEvent(fields EventFields)
+	LogEvent(fields EventFields) error
 
 	// Close is called when clients close on the requested "session writer".
 	// We ignore their requests because this writer (file) should be closed only
@@ -114,8 +114,8 @@ type DiskSessionLogger struct {
 }
 
 // LogEvent logs an event associated with this session
-func (sl *DiskSessionLogger) LogEvent(fields EventFields) {
-	panic("do not work")
+func (sl *DiskSessionLogger) LogEvent(fields EventFields) error {
+	panic("does  not work")
 }
 
 // Close is called when clients close on the requested "session writer".
@@ -132,6 +132,10 @@ func (sl *DiskSessionLogger) Finalize() error {
 	sl.Lock()
 	defer sl.Unlock()
 
+	return sl.finalize()
+}
+
+func (sl *DiskSessionLogger) finalize() error {
 	auditOpenFiles.Dec()
 
 	if sl.indexFile != nil {
@@ -239,6 +243,9 @@ func (sl *DiskSessionLogger) WriteChunk(chunk *SessionChunk) (written int, err e
 	sl.lastEventIndex = chunk.EventIndex
 
 	if chunk.EventType != SessionPrintEvent {
+		if chunk.EventType == SessionEndEvent {
+			defer sl.closeLogger()
+		}
 		var fields EventFields
 		err := json.Unmarshal(chunk.Data, &fields)
 		if err != nil {
@@ -286,6 +293,13 @@ func (sl *DiskSessionLogger) WriteChunk(chunk *SessionChunk) (written int, err e
 		return -1, trace.Wrap(err)
 	}
 	return sl.chunksFile.Write(chunk.Data)
+}
+
+func (sl *DiskSessionLogger) closeLogger() {
+	sl.AuditLog.removeLogger(sl.SessionID.String())
+	if err := sl.finalize(); err != nil {
+		log.Error(err)
+	}
 }
 
 func diff(before, after time.Time) int64 {
