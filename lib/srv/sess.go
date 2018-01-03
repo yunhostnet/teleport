@@ -174,9 +174,7 @@ func (s *SessionRegistry) leaveSession(party *party) error {
 
 		// close recorder to free up associated resources
 		// and flush data
-		if sess.recorder != nil {
-			sess.recorder.Close()
-		}
+		sess.recorder.Close()
 
 		if err := sess.Close(); err != nil {
 			log.Error(err)
@@ -585,14 +583,16 @@ func (s *session) start(ch ssh.Channel, ctx *ServerContext) error {
 
 	// start recording this session
 	auditLog := s.registry.srv.GetAuditLog()
-	if auditLog != nil {
-		var err error
-		s.recorder, err = newSessionRecorder(auditLog, ctx.srv.GetNamespace(), s.id)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		s.writer.addWriter("session-recorder", s.recorder, true)
+	if auditLog == nil {
+		return trace.BadParameter("missing audit log for session event stream reporting")
 	}
+
+	var err error
+	s.recorder, err = newSessionRecorder(auditLog, ctx.srv.GetNamespace(), s.id)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	s.writer.addWriter("session-recorder", s.recorder, true)
 
 	// emit "new session created" event:
 	s.recorder.alog.EmitAuditEvent(events.SessionStartEvent, events.EventFields{
