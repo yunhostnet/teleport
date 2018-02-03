@@ -602,53 +602,100 @@ func (i *TeleInstance) AddUser(username string, mappings []string) *User {
 	return user
 }
 
-func (i *TeleInstance) Start() (err error) {
-	proxyReady := make(chan service.Event)
-	sshReady := make(chan service.Event)
-	tunnelReady := make(chan service.Event)
-	allReady := make(chan interface{})
+func (i *TeleInstance) Start() error {
+	broadcastCh := make(chan service.Event)
 
-	i.Process.WaitForEvent(service.ProxyIdentityEvent, proxyReady, make(chan struct{}))
-	i.Process.WaitForEvent(service.SSHIdentityEvent, sshReady, make(chan struct{}))
-	i.Process.WaitForEvent(service.ProxyReverseTunnelServerEvent, tunnelReady, make(chan struct{}))
+	i.Process.WaitForEvent(service.NodeSSHReady, broadcastCh, make(chan struct{}))
+	i.Process.WaitForEvent(service.ProxyReverseTunnelReady, broadcastCh, make(chan struct{}))
 
-	if err = i.Process.Start(); err != nil {
+	err := i.Process.Start()
+	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	defer func() {
-		close(sshReady)
-		close(proxyReady)
-	}()
+	//service.AuthServerSSHReady
+	//service.AuthServerTLSReady
+	//service.ProxyWebServerReady
+	//service.ProxyReverseTunnelReady
+	//service.ProxySSHReady
+	//service.NodeSSHReady
 
-	go func() {
-		if i.Config.SSH.Enabled {
-			<-sshReady
+	timeout := time.After(5 * time.Second)
+
+	serviceCount := 0
+
+	for {
+		select {
+		case e := <-broadcastCh:
+			serviceCount = serviceCount + 1
+
+			// if it's a reverse tunnel
+			ts, ok := e.Payload.(reversetunnel.Server)
+			if ok {
+				i.Tunnel = ts
+			}
+
+			if serviceCount == 2 {
+				fmt.Printf("--> Teleport Started\n")
+				return nil
+			}
+		case <-timeout:
+			if serviceCount != 2 {
+				fmt.Printf("Timed out, only %v/%v services started.")
+				return trace.BadParameter("timed out, only %v/%v services started", serviceCount, 2)
+			}
 		}
-		<-proxyReady
-		te := <-tunnelReady
-		ts, ok := te.Payload.(reversetunnel.Server)
-		if !ok {
-			err = fmt.Errorf("Global event '%v' did not deliver reverseTunenl server pointer as a payload", service.ProxyReverseTunnelServerEvent)
-			log.Error(err)
-		}
-		i.Tunnel = ts
-		close(allReady)
-	}()
-
-	timeoutTicker := time.NewTicker(time.Second * 5)
-	defer timeoutTicker.Stop()
-
-	select {
-	case <-allReady:
-		time.Sleep(time.Millisecond * 100)
-		break
-	case <-timeoutTicker.C:
-		return fmt.Errorf("failed to start local Teleport instance: timeout")
 	}
-	log.Infof("Teleport instance '%v' started!", i.Secrets.SiteName)
-	return err
+
 }
+
+//func (i *TeleInstance) Start() (err error) {
+//	proxyReady := make(chan service.Event)
+//	sshReady := make(chan service.Event)
+//	tunnelReady := make(chan service.Event)
+//	allReady := make(chan interface{})
+//
+//	i.Process.WaitForEvent(service.ProxyIdentityEvent, proxyReady, make(chan struct{}))
+//	i.Process.WaitForEvent(service.SSHIdentityEvent, sshReady, make(chan struct{}))
+//	i.Process.WaitForEvent(service.ProxyReverseTunnelServerEvent, tunnelReady, make(chan struct{}))
+//
+//	if err = i.Process.Start(); err != nil {
+//		return trace.Wrap(err)
+//	}
+//
+//	defer func() {
+//		close(sshReady)
+//		close(proxyReady)
+//	}()
+//
+//	go func() {
+//		if i.Config.SSH.Enabled {
+//			<-sshReady
+//		}
+//		<-proxyReady
+//		te := <-tunnelReady
+//		ts, ok := te.Payload.(reversetunnel.Server)
+//		if !ok {
+//			err = fmt.Errorf("Global event '%v' did not deliver reverseTunenl server pointer as a payload", service.ProxyReverseTunnelServerEvent)
+//			log.Error(err)
+//		}
+//		i.Tunnel = ts
+//		close(allReady)
+//	}()
+//
+//	timeoutTicker := time.NewTicker(time.Second * 5)
+//	defer timeoutTicker.Stop()
+//
+//	select {
+//	case <-allReady:
+//		time.Sleep(time.Millisecond * 100)
+//		break
+//	case <-timeoutTicker.C:
+//		return fmt.Errorf("failed to start local Teleport instance: timeout")
+//	}
+//	log.Infof("Teleport instance '%v' started!", i.Secrets.SiteName)
+//	return err
+//}
 
 // ClientConfig is a client configuration
 type ClientConfig struct {
