@@ -142,6 +142,11 @@ type TeleportProcess struct {
 
 	// identities of this process (credentials to auth sever, basically)
 	Identities map[teleport.Role]*auth.Identity
+
+	// exit indicates if the process was asked to exit or if it was forced to
+	// exit (due to an error).
+	exit   bool
+	exitMu sync.Mutex
 }
 
 // GetAuthServer returns the process' auth server
@@ -390,10 +395,8 @@ func (process *TeleportProcess) getLocalAuth() *auth.AuthServer {
 
 // initAuthService can be called to initialize auth server service
 func (process *TeleportProcess) initAuthService(authority sshca.Authority) error {
-	var (
-		askedToExit = false
-		err         error
-	)
+	var err error
+
 	cfg := process.Config
 
 	// Initialize the storage back-ends for keys, events and records
@@ -557,7 +560,7 @@ func (process *TeleportProcess) initAuthService(authority sshca.Authority) error
 		process.BroadcastEvent(Event{Name: AuthSSHReady, Payload: nil})
 
 		if err := authTunnel.Serve(mux.SSH()); err != nil {
-			if askedToExit {
+			if process.askedToExit() {
 				log.Infof("Auth tunnel exited.")
 				return nil
 			}
@@ -642,7 +645,7 @@ func (process *TeleportProcess) initAuthService(authority sshca.Authority) error
 			log.Warnf("Parameter advertise_ip is not set for this auth server. Trying to guess the IP this server can be reached at: %v.", srv.GetAddr())
 		}
 		// immediately register, and then keep repeating in a loop:
-		for !askedToExit {
+		for !process.askedToExit() {
 			srv.SetTTL(process, defaults.ServerHeartbeatTTL)
 			err := authServer.UpsertAuthServer(&srv)
 			if err != nil {
@@ -657,7 +660,8 @@ func (process *TeleportProcess) initAuthService(authority sshca.Authority) error
 
 	// execute this when process is asked to exit:
 	process.onExit(func(payload interface{}) {
-		askedToExit = true
+		process.setExit(true)
+
 		mux.Close()
 		authTunnel.Close()
 		tlsServer.Close()
@@ -980,10 +984,7 @@ func (process *TeleportProcess) setupProxyListeners() (*proxyListeners, error) {
 }
 
 func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
-	var (
-		askedToExit = true
-		err         error
-	)
+	var err error
 	cfg := process.Config
 
 	proxyLimiter, err := limiter.NewLimiter(cfg.Proxy.Limiter)
@@ -1063,7 +1064,7 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 			process.BroadcastEvent(Event{Name: ProxyReverseTunnelReady, Payload: tsrv})
 
 			tsrv.Wait()
-			if askedToExit {
+			if process.askedToExit() {
 				log.Infof("Reverse tunnel exited.")
 			}
 			return nil
@@ -1100,7 +1101,7 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 				listeners.web = tls.NewListener(listeners.web, tlsConfig)
 			}
 			if err = http.Serve(listeners.web, proxyLimiter); err != nil {
-				if askedToExit {
+				if process.askedToExit() {
 					log.Infof("Proxy web server exited.")
 					return nil
 				}
@@ -1136,7 +1137,7 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 	process.RegisterFunc("proxy.ssh", func() error {
 		utils.Consolef(cfg.Console, "[PROXY] SSH proxy service is starting on %v", cfg.Proxy.SSHAddr.Addr)
 		if err := sshProxy.Start(); err != nil {
-			if askedToExit {
+			if process.askedToExit() {
 				log.Infof("SSH proxy exited")
 				return nil
 			}
@@ -1206,6 +1207,20 @@ func (process *TeleportProcess) Close() error {
 		return trace.Wrap(process.localAuth.Close())
 	}
 	return nil
+}
+
+func (process *TeleportProcess) askedToExit() bool {
+	process.exitMu.Lock()
+	defer process.exitMu.Unlock()
+
+	return process.exit
+}
+
+func (process *TeleportProcess) setExit(exit bool) {
+	process.exitMu.Lock()
+	defer process.exitMu.Unlock()
+
+	process.exit = exit
 }
 
 func validateConfig(cfg *Config) error {
