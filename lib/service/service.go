@@ -50,7 +50,6 @@ import (
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/srv/regular"
-	"github.com/gravitational/teleport/lib/sshca"
 	"github.com/gravitational/teleport/lib/state"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/lib/web"
@@ -350,11 +349,15 @@ func NewTeleport(cfg *Config) (*TeleportProcess, error) {
 
 	serviceStarted := false
 
+	// Create a process wide key generator that will be shared. This is so the
+	// key generator can pre-generate keys and share these across services.
+	if cfg.Keygen == nil {
+		// TODO(russjones): This should also be closed at some time.
+		cfg.Keygen = native.New()
+	}
+
 	if cfg.Auth.Enabled {
-		if cfg.Keygen == nil {
-			cfg.Keygen = native.New()
-		}
-		if err := process.initAuthService(cfg.Keygen); err != nil {
+		if err := process.initAuthService(); err != nil {
 			return nil, trace.Wrap(err)
 		}
 		serviceStarted = true
@@ -394,7 +397,7 @@ func (process *TeleportProcess) getLocalAuth() *auth.AuthServer {
 }
 
 // initAuthService can be called to initialize auth server service
-func (process *TeleportProcess) initAuthService(authority sshca.Authority) error {
+func (process *TeleportProcess) initAuthService() error {
 	var err error
 
 	cfg := process.Config
@@ -456,7 +459,7 @@ func (process *TeleportProcess) initAuthService(authority sshca.Authority) error
 	// first, create the AuthServer
 	authServer, identity, err := auth.Init(auth.InitConfig{
 		Backend:              b,
-		Authority:            authority,
+		Authority:            cfg.Keygen,
 		ClusterConfiguration: cfg.ClusterConfiguration,
 		ClusterConfig:        cfg.Auth.ClusterConfig,
 		ClusterName:          cfg.Auth.ClusterName,
@@ -885,7 +888,13 @@ func (process *TeleportProcess) initProxy() error {
 		if !ok {
 			return trace.BadParameter("unsupported connector type: %T", event.Payload)
 		}
-		return trace.Wrap(process.initProxyEndpoint(conn))
+
+		err := process.initProxyEndpoint(conn)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		return nil
 	})
 	return nil
 }
@@ -1046,6 +1055,7 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 						Client: conn.Client,
 					},
 				},
+				KeyGen:        cfg.Keygen,
 				Ciphers:       cfg.Ciphers,
 				KEXAlgorithms: cfg.KEXAlgorithms,
 				MACAlgorithms: cfg.MACAlgorithms,
