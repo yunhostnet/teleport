@@ -826,72 +826,86 @@ func onShow(cf *CLIConf) {
 	fmt.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
 }
 
+func printProfile(cp *client.ClientProfile, isActive bool) {
+	if isActive {
+		fmt.Printf("> ")
+	} else {
+		fmt.Printf("  ")
+	}
+	fmt.Printf("Profile URL: https://%v:%v\n", cp.ProxyHost, cp.ProxyWebPort)
+
+	//Logged in as:  ev@kontsevoy.com
+	//Roles:         admin*
+	//Logins:        rjones, root
+	//Valid until:   03/04/2018 2:45pm PST [EXPIRED]
+	//Extensions:    permit-agent-forwarding, permit-port-forwarding, permit-pty
+
+	//// Get certificate for logged in user from the local agent.
+	//key, err := tc.LocalAgent().GetKey()
+	//if err != nil {
+	//	utils.FatalError(err)
+	//}
+	//publicKey, _, _, _, err := ssh.ParseAuthorizedKey(key.Cert)
+	//if err != nil {
+	//	utils.FatalError(err)
+	//}
+	//cert, ok := publicKey.(*ssh.Certificate)
+	//if !ok {
+	//	utils.FatalError(trace.BadParameter("no certificate found"))
+	//}
+
+	//// Extract from the certificate how much longer it will be valid for.
+	//exp := time.Unix(int64(cert.ValidBefore), 0).Sub(time.Now())
+	//expiresIn := exp.Round(time.Minute)
+
+	//// Extract from the certificate the format and any extensions.
+	//var val := teleport.CertificateFormatOldSSH
+	//var extensions []string
+	//for ext, val := range cert.Extensions {
+	//	if ext == teleport.CertExtensionTeleportRoles {
+	//		certFormat = teleport.CertificateFormatStandard
+	//		continue
+	//	}
+	//	extensions = append(extensions, ext)
+	//}
+
+	//// Print output of the status command.
+	//fmt.Printf("%v\n", tc.ProxyHost())
+	//fmt.Println(strings.Repeat("-", len(tc.ProxyHost())+1))
+
+	//fmt.Printf("User:       %v\n", tc.Username)
+	//fmt.Printf("Roles:      %v\n", strings.Join(r, ", "))
+
+	//fmt.Printf("Logins:     %v\n", strings.Join(cert.ValidPrincipals, ", "))
+	//fmt.Printf("Expires:    %v\n", expiresIn)
+	//fmt.Printf("Extensions: %v\n", strings.Join(extensions, ", "))
+	//fmt.Printf("Format:     %v\n", certFormat)
+
+}
+
 // onStatus command shows which proxy the user is logged into and metadata
 // about the certificate.
+
+// TODO(russjones): This commmand needs to be able to also support filtering
+// and printing on a single profile.
 func onStatus(cf *CLIConf) {
 	tc, err := makeClient(cf, true)
 	if err != nil {
 		utils.FatalError(err)
 	}
 
-	proxyClient, err := tc.ConnectToProxy(cf.Context)
+	profile, profiles, err := tc.Status("")
 	if err != nil {
 		utils.FatalError(err)
 	}
-	defer proxyClient.Close()
+	fmt.Printf("--> profile:  %v\n", profile)
+	fmt.Printf("--> profiles: %v\n", profiles)
 
-	// Query the Access Point for the list of roles for the current user.
-	cap, err := proxyClient.ClusterAccessPoint(context.Background(), true)
-	if err != nil {
-		utils.FatalError(err)
+	if profile != nil {
+		printProfile(profile, true)
 	}
-	roles, err := cap.GetRoles()
-	if err != nil {
-		utils.FatalError(err)
-	}
-	var r []string
-	for _, role := range roles {
-		r = append(r, role.GetName())
-	}
+	for _, p := range profiles {
+		printProfile(profile, false)
 
-	// Get certificate for logged in user from the local agent.
-	key, err := tc.LocalAgent().GetKey()
-	if err != nil {
-		utils.FatalError(err)
 	}
-	publicKey, _, _, _, err := ssh.ParseAuthorizedKey(key.Cert)
-	if err != nil {
-		utils.FatalError(err)
-	}
-	cert, ok := publicKey.(*ssh.Certificate)
-	if !ok {
-		utils.FatalError(trace.BadParameter("no certificate found"))
-	}
-
-	// Extract from the certificate how much longer it will be valid for.
-	exp := time.Unix(int64(cert.ValidBefore), 0).Sub(time.Now())
-	expiresIn := exp.Round(time.Minute)
-
-	// Extract from the certificate the format and any extensions.
-	certFormat := teleport.CertificateFormatOldSSH
-	var extensions []string
-	for ext, _ := range cert.Extensions {
-		if ext == teleport.CertExtensionTeleportRoles {
-			certFormat = teleport.CertificateFormatStandard
-			continue
-		}
-		extensions = append(extensions, ext)
-	}
-
-	// Print output of the status command.
-	fmt.Printf("%v\n", tc.ProxyHost())
-	fmt.Println(strings.Repeat("-", len(tc.ProxyHost())+1))
-
-	fmt.Printf("User:       %v\n", tc.Username)
-	fmt.Printf("Roles:      %v\n", strings.Join(r, ", "))
-
-	fmt.Printf("Logins:     %v\n", strings.Join(cert.ValidPrincipals, ", "))
-	fmt.Printf("Expires:    %v\n", expiresIn)
-	fmt.Printf("Extensions: %v\n", strings.Join(extensions, ", "))
-	fmt.Printf("Format:     %v\n", certFormat)
 }

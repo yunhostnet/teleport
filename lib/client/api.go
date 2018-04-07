@@ -27,6 +27,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -210,6 +211,76 @@ func MakeDefaultConfig() *Config {
 		Stderr: os.Stderr,
 		Stdin:  os.Stdin,
 	}
+}
+
+type ProfileStatus struct {
+	ProxyURL   url.URL
+	Username   string
+	Roles      []string
+	Logins     []string
+	ValidUntil time.Time
+	Extensions []string
+}
+
+func (c *Config) profileStatus(profileDir string, profileName string) (*ProfileStatus, error) {
+	profile, err := ProfileFromFile(filepath.Join(profileDir, profileName))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return &ProfileStatus{
+		Username: profile.Username,
+	}, nil
+}
+
+func (c *Config) Status(profileDir string) (*ProfileStatus, []*ProfileStatus, error) {
+	var err error
+	var profile *ProfileStatus
+	var others []*ProfileStatus
+
+	profileDir = FullProfilePath(profileDir)
+
+	// Get logged in profile first. If nothing is found (user may have
+	// deleted ~/.tsh/profile, then just return nil *ProfileStatus.
+	profileName, err := os.Readlink(filepath.Join(profileDir, "profile"))
+	if err != nil {
+		if !trace.IsNotFound(trace.ConvertSystemError(err)) {
+			return nil, nil, trace.Wrap(err)
+		}
+	}
+	if profileName != "" {
+		profile, err = c.profileStatus(profileDir, profileName)
+		if err != nil {
+			return nil, nil, trace.Wrap(err)
+		}
+	}
+
+	// Get list of all other available profiles. Filter out logged in profile
+	// if it exists and return a slice of *ProfileStatus.
+	files, err := ioutil.ReadDir(profileDir)
+	if err != nil {
+		return nil, nil, trace.Wrap(err)
+	}
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(file.Name(), ".yaml") {
+			continue
+		}
+		if file.Name() == profileName {
+			continue
+		}
+
+		ps, err := c.profileStatus(profileDir, file.Name())
+		if err != nil {
+			return nil, nil, trace.Wrap(err)
+		}
+
+		others = append(others, ps)
+	}
+
+	return profile, others, nil
 }
 
 // LoadProfile populates Config with the values stored in the given
