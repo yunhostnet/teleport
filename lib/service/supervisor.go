@@ -61,9 +61,39 @@ type Supervisor interface {
 	BroadcastEvent(Event)
 
 	// WaitForEvent waits for event to be broadcasted, if the event
-	// was already broadcasted, payloadC will receive current event immediately
-	// CLose 'cancelC' channel to force WaitForEvent to return prematurely
-	WaitForEvent(name string, eventC chan Event, cancelC chan struct{})
+	// was already broadcasted, eventC will receive current event immediately
+	WaitForEvent(ctx context.Context, name string, eventC chan Event)
+
+	// RegisterEventMapping registers event mapping -
+	// when the sequence in the event mapping triggers, the
+	// outbound event will be generated
+	RegisterEventMapping(EventMapping)
+
+	// ExitContext returns context that will be closed when
+	// TeleportExitEvent will be broadcasted by any caller
+	ExitContext() context.Context
+
+	// ReloadContext returns context that will be closed when
+	// TeleportReloadEvent will be broadcasted by any caller
+	ReloadContext() context.Context
+}
+
+// EventMapping maps a sequence of incoming
+// events and if triggered, generates an out event
+type EventMapping struct {
+	// In incoming event sequence
+	In []string
+	// Out is an outbound event to generate
+	Out string
+}
+
+func (e EventMapping) matches(m map[string]Event) bool {
+	for _, in := range e.In {
+		if _, ok := m[in]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 type LocalSupervisor struct {
@@ -75,13 +105,27 @@ type LocalSupervisor struct {
 	events       map[string]Event
 	eventsC      chan Event
 	eventWaiters map[string][]*waiter
+
 	closeContext context.Context
 	signalClose  context.CancelFunc
+
+	// exitContext is closed when someone emits Exit event
+	exitContext context.Context
+	signalExit  context.CancelFunc
+
+	reloadContext context.Context
+	signalReload  context.CancelFunc
+
+	eventMappings []EventMapping
 }
 
 // NewSupervisor returns new instance of initialized supervisor
 func NewSupervisor() Supervisor {
 	closeContext, cancel := context.WithCancel(context.TODO())
+
+	exitContext, signalExit := context.WithCancel(context.TODO())
+	reloadContext, signalReload := context.WithCancel(context.TODO())
+
 	srv := &LocalSupervisor{
 		services:     []Service{},
 		wg:           &sync.WaitGroup{},
@@ -90,6 +134,12 @@ func NewSupervisor() Supervisor {
 		eventWaiters: make(map[string][]*waiter),
 		closeContext: closeContext,
 		signalClose:  cancel,
+
+		exitContext: exitContext,
+		signalExit:  signalExit,
+
+		reloadContext: reloadContext,
+		signalReload:  signalReload,
 	}
 	go srv.fanOut()
 	return srv
@@ -201,22 +251,56 @@ func (s *LocalSupervisor) Run() error {
 	return s.Wait()
 }
 
+func (s *LocalSupervisor) ExitContext() context.Context {
+	return s.exitContext
+}
+
+func (s *LocalSupervisor) ReloadContext() context.Context {
+	return s.reloadContext
+}
+
 func (s *LocalSupervisor) BroadcastEvent(event Event) {
 	s.Lock()
 	defer s.Unlock()
+
+	switch event.Name {
+	case TeleportExitEvent:
+		s.signalExit()
+	case TeleportReloadEvent:
+		s.signalReload()
+	}
+
 	s.events[event.Name] = event
 	log.WithFields(logrus.Fields{"event": event.String()}).Debugf("Broadcasting event.")
 
 	go func() {
 		s.eventsC <- event
 	}()
+
+	for _, m := range s.eventMappings {
+		if m.matches(s.events) {
+			event := Event{Name: m.Out}
+			s.events[event.Name] = event
+			go func(event Event) {
+				s.eventsC <- event
+			}(event)
+			log.WithFields(logrus.Fields{"event": event.String()}).Debugf("Broadcasting mapped event.")
+		}
+	}
 }
 
-func (s *LocalSupervisor) WaitForEvent(name string, eventC chan Event, cancelC chan struct{}) {
+func (s *LocalSupervisor) RegisterEventMapping(m EventMapping) {
 	s.Lock()
 	defer s.Unlock()
 
-	waiter := &waiter{eventC: eventC, cancelC: cancelC}
+	s.eventMappings = append(s.eventMappings, m)
+}
+
+func (s *LocalSupervisor) WaitForEvent(ctx context.Context, name string, eventC chan Event) {
+	s.Lock()
+	defer s.Unlock()
+
+	waiter := &waiter{eventC: eventC, context: ctx}
 	event, ok := s.events[name]
 	if ok {
 		go s.notifyWaiter(waiter, event)
@@ -240,7 +324,7 @@ func (s *LocalSupervisor) getWaiters(name string) []*waiter {
 func (s *LocalSupervisor) notifyWaiter(w *waiter, event Event) {
 	select {
 	case w.eventC <- event:
-	case <-w.cancelC:
+	case <-w.context.Done():
 	}
 }
 
@@ -260,7 +344,7 @@ func (s *LocalSupervisor) fanOut() {
 
 type waiter struct {
 	eventC  chan Event
-	cancelC chan struct{}
+	context context.Context
 }
 
 // Service is a running teleport service function

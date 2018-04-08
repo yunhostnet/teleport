@@ -124,6 +124,12 @@ func (process *TeleportProcess) WaitForSignals(ctx context.Context) error {
 			default:
 				log.Infof("Ignoring %q.", signal)
 			}
+		case <-process.ReloadContext().Done():
+			log.Infof("Exiting signal handler: process has started internal reload.")
+			return ErrTeleportReloading
+		case <-process.ExitContext().Done():
+			log.Infof("Someone else has closed context, exiting.")
+			return nil
 		case <-ctx.Done():
 			process.Close()
 			process.Wait()
@@ -132,6 +138,12 @@ func (process *TeleportProcess) WaitForSignals(ctx context.Context) error {
 		}
 	}
 }
+
+// ErrTeleportReloading is returned when signal waiter exits
+// because the teleport process has initiaded shutdown
+var ErrTeleportReloading = trace.CompareFailed("teleport process is reloading")
+
+var errTeleportExited = trace.CompareFailed("teleport process has shutdown")
 
 func (process *TeleportProcess) writeToSignalPipe(message string) error {
 	signalPipe, err := process.importSignalPipe()
@@ -248,8 +260,8 @@ func (process *TeleportProcess) createListener(listenerType, address string) (ne
 	return listener, nil
 }
 
-// exportFileDescriptors exports file descriptors to be passed to child process
-func (process *TeleportProcess) exportFileDescriptors() ([]FileDescriptor, error) {
+// ExportFileDescriptors exports file descriptors to be passed to child process
+func (process *TeleportProcess) ExportFileDescriptors() ([]FileDescriptor, error) {
 	var out []FileDescriptor
 	process.Lock()
 	defer process.Unlock()
@@ -377,7 +389,7 @@ const (
 	// signalPipeTimeout is a time parent process is expecting
 	// the child process to initialize and write back,
 	// or child process is blocked on write to the pipe
-	signalPipeTimeout = 5 * time.Second
+	signalPipeTimeout = 2 * time.Minute
 )
 
 func (process *TeleportProcess) forkChild() error {
@@ -402,7 +414,7 @@ func (process *TeleportProcess) forkChild() error {
 
 	log.Info("Forking child.")
 
-	listenerFiles, err := process.exportFileDescriptors()
+	listenerFiles, err := process.ExportFileDescriptors()
 	if err != nil {
 		return trace.Wrap(err)
 	}

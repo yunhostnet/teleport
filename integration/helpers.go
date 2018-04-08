@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -260,7 +261,7 @@ func (s *InstanceSecrets) AsSlice() []*InstanceSecrets {
 }
 
 func (s *InstanceSecrets) GetIdentity() *auth.Identity {
-	i, err := auth.ReadIdentityFromKeyPair(s.PrivKey, s.Cert, s.TLSCert, s.TLSCACert)
+	i, err := auth.ReadIdentityFromKeyPair(s.PrivKey, s.Cert, s.TLSCert, [][]byte{s.TLSCACert})
 	fatalIf(err)
 	return i
 }
@@ -832,7 +833,7 @@ func startAndWait(process *service.TeleportProcess, expectedEvents []string) ([]
 	// register to listen for all ready events on the broadcast channel
 	broadcastCh := make(chan service.Event)
 	for _, eventName := range expectedEvents {
-		process.WaitForEvent(eventName, broadcastCh, make(chan struct{}))
+		process.WaitForEvent(context.TODO(), eventName, broadcastCh)
 	}
 
 	// start the process

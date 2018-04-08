@@ -148,10 +148,10 @@ func (s *IntSuite) newTeleportWithConfig(c *check.C, logins []string, instanceSe
 
 	// create a new teleport instance with passed in configuration
 	if err := t.CreateEx(instanceSecrets, teleportConfig); err != nil {
-		c.Fatalf("Unexpected response from CreateEx: %v", err)
+		c.Fatalf("Unexpected response from CreateEx: %v", trace.DebugReport(err))
 	}
 	if err := t.Start(); err != nil {
-		c.Fatalf("Unexpected response from Start: %v", err)
+		c.Fatalf("Unexpected response from Start: %v", trace.DebugReport(err))
 	}
 
 	return t
