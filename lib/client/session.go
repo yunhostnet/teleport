@@ -339,6 +339,7 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 			if lastParams == nil {
 				continue
 			}
+
 			// Get the current size of the terminal and the last size report that was
 			// received.
 			currSize, err := term.GetWinsize(0)
@@ -347,6 +348,8 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 				continue
 			}
 			lastSize := lastParams.Winsize()
+
+			// Redraw right away.
 			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
 
 			// Terminal size has not changed, don't do anything.
@@ -360,7 +363,7 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 				log.Warnf("Unable to update terminal size: %v.\n", err)
 				continue
 			}
-			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
+			//os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
 		case <-ns.closer.C:
 			return
 		}

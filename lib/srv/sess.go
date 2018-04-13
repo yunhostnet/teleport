@@ -265,11 +265,6 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 
 	// Notify all members of the party that the size of the window has changed.
 	for _, p := range s.getParties(ctx) {
-		err := p.s.term.SetWinSize(params)
-		if err != nil {
-			s.log.Warnf("Unable to update window size: %v.", err)
-		}
-
 		p.sconn.SendRequest("x-teleport-window-change", false, []byte(params.Serialize()))
 		p.onWindowChanged(&params)
 	}

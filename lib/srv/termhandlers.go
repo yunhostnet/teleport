@@ -17,6 +17,7 @@ limitations under the License.
 package srv
 
 import (
+	//"fmt"
 	"golang.org/x/crypto/ssh"
 	"io/ioutil"
 
@@ -189,14 +190,14 @@ func (t *TermHandlers) HandleWinChange(ch ssh.Channel, req *ssh.Request, ctx *Se
 		return trace.Wrap(err)
 	}
 
-	// If a PTY has been allocated for this context, update the size of the PTY.
-	term := ctx.GetTerm()
-	if term != nil {
-		err = term.SetWinSize(*params)
-		if err != nil {
-			ctx.Errorf("Unable to set window size: %v", err)
-		}
-	}
+	//// If a PTY has been allocated for this context, update the size of the PTY.
+	//term := ctx.GetTerm()
+	//if term != nil {
+	//	err = term.SetWinSize(*params)
+	//	if err != nil {
+	//		ctx.Errorf("Unable to set window size: %v", err)
+	//	}
+	//}
 
 	// Update any other members in the party that the window size has changed
 	// and to update their terminal windows accordingly.
