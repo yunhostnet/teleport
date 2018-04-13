@@ -23,15 +23,16 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
-	"time"
+	//"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/gravitational/teleport"
-	"github.com/gravitational/teleport/lib/defaults"
+	//"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/utils"
@@ -286,16 +287,16 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 	signal.Notify(sigC, syscall.SIGWINCH)
 	currentSize, _ := term.GetWinsize(0)
 
-	// start the timer which asks for server-side window size changes:
-	siteClient, err := ns.nodeClient.Proxy.ConnectToSite(context.TODO(), true)
-	if err != nil {
-		log.Error(err)
-		return
-	}
-	tick := time.NewTicker(defaults.SessionRefreshPeriod)
-	defer tick.Stop()
+	//// start the timer which asks for server-side window size changes:
+	//siteClient, err := ns.nodeClient.Proxy.ConnectToSite(context.TODO(), true)
+	//if err != nil {
+	//	log.Error(err)
+	//	return
+	//}
+	//tick := time.NewTicker(defaults.SessionRefreshPeriod)
+	//defer tick.Stop()
 
-	var prevSess *session.Session
+	//var prevSess *session.Session
 	for {
 		select {
 		// our own terminal window got resized:
@@ -323,39 +324,61 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 			if err != nil {
 				log.Warnf("[CLIENT] failed to send window change reqest: %v", err)
 			}
-		case <-tick.C:
-			sess, err := siteClient.GetSession(ns.namespace, ns.id)
-			if err != nil {
-				if !trace.IsNotFound(err) {
-					log.Error(trace.DebugReport(err))
-				}
-				continue
-			}
-			// no previous session
-			if prevSess == nil || sess == nil {
-				prevSess = sess
-				continue
-			}
-			// nothing changed
-			if prevSess.TerminalParams.W == sess.TerminalParams.W && prevSess.TerminalParams.H == sess.TerminalParams.H {
-				continue
-			}
-			log.Infof("[CLIENT] updating the session %v with %d parties", sess.ID, len(sess.Parties))
+		case r := <-ns.NodeClient().WindowChangeRequests():
 
-			newSize := sess.TerminalParams.Winsize()
-			currentSize, err = term.GetWinsize(0)
+			parts := strings.Split(string(r.Payload), ":")
+			width, _ := strconv.Atoi(parts[0])
+			height, _ := strconv.Atoi(parts[1])
+
+			fmt.Printf("--> Session: %v, w: %v, h: %v\r\n", string(r.Payload), width, height)
+
+			params, err := session.NewTerminalParamsFromInt(width, height)
 			if err != nil {
-				log.Error(err)
+				log.Warnf("Failed to update window size: %v", err)
+				return
 			}
-			if currentSize.Width != newSize.Width || currentSize.Height != newSize.Height {
-				// ok, something have changed, let's resize to the new parameters
-				err = term.SetWinsize(0, newSize)
-				if err != nil {
-					log.Error(err)
-				}
-				os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", newSize.Height, newSize.Width)))
+
+			newSize := params.Winsize()
+			err = term.SetWinsize(0, newSize)
+			if err != nil {
+				log.Warnf("Failed to update terminal size: %v", err)
+				return
 			}
-			prevSess = sess
+			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", newSize.Height, newSize.Width)))
+
+		//case <-tick.C:
+		//	sess, err := siteClient.GetSession(ns.namespace, ns.id)
+		//	if err != nil {
+		//		if !trace.IsNotFound(err) {
+		//			log.Error(trace.DebugReport(err))
+		//		}
+		//		continue
+		//	}
+		//	// no previous session
+		//	if prevSess == nil || sess == nil {
+		//		prevSess = sess
+		//		continue
+		//	}
+		//	// nothing changed
+		//	if prevSess.TerminalParams.W == sess.TerminalParams.W && prevSess.TerminalParams.H == sess.TerminalParams.H {
+		//		continue
+		//	}
+		//	log.Infof("[CLIENT] updating the session %v with %d parties", sess.ID, len(sess.Parties))
+
+		//	newSize := sess.TerminalParams.Winsize()
+		//	currentSize, err = term.GetWinsize(0)
+		//	if err != nil {
+		//		log.Error(err)
+		//	}
+		//	if currentSize.Width != newSize.Width || currentSize.Height != newSize.Height {
+		//		// ok, something have changed, let's resize to the new parameters
+		//		err = term.SetWinsize(0, newSize)
+		//		if err != nil {
+		//			log.Error(err)
+		//		}
+		//		os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", newSize.Height, newSize.Width)))
+		//	}
+		//	prevSess = sess
 		case <-ns.closer.C:
 			return
 		}

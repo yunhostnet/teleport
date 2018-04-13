@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -63,6 +64,8 @@ type NodeClient struct {
 	Namespace string
 	Client    *ssh.Client
 	Proxy     *ProxyClient
+
+	windowChangeCh chan *ssh.Request
 }
 
 // GetSites returns list of the "sites" (AKA teleport clusters) connected to the proxy
@@ -420,9 +423,50 @@ func (proxy *ProxyClient) ConnectToNode(ctx context.Context, nodeAddress string,
 		return nil, trace.Wrap(err)
 	}
 
-	client := ssh.NewClient(conn, chans, reqs)
+	// We pass an empty channel which we close right away to ssh.NewClient
+	// because the client need to handle requests itself.
+	emptyCh := make(chan *ssh.Request)
+	close(emptyCh)
 
-	return &NodeClient{Client: client, Proxy: proxy, Namespace: defaults.Namespace}, nil
+	client := ssh.NewClient(conn, chans, emptyCh)
+
+	nc := &NodeClient{
+		Client:         client,
+		Proxy:          proxy,
+		Namespace:      defaults.Namespace,
+		windowChangeCh: make(chan *ssh.Request, 10),
+	}
+
+	// Start a goroutine that will run for the duration of the client to process
+	// global requests from the client. Teleport clients will use this to update
+	// terminal sizes when the remote PTY size has changed.
+	go nc.handleGlobalRequests(ctx, reqs)
+
+	return nc, nil
+}
+
+func (c *NodeClient) WindowChangeRequests() <-chan *ssh.Request {
+	return c.windowChangeCh
+}
+
+func (c *NodeClient) handleGlobalRequests(ctx context.Context, requestCh <-chan *ssh.Request) {
+	for {
+		select {
+		case r := <-requestCh:
+			switch r.Type {
+			case "x-teleport-window-change":
+				fmt.Printf("--> Client: %v\r\n", string(r.Payload))
+				c.windowChangeCh <- r
+			default:
+				// This handles keepalive messages and matches
+				// the behaviour of OpenSSH.
+				r.Reply(false, nil)
+			}
+		case <-ctx.Done():
+			break
+		}
+	}
+	return
 }
 
 // newClientConn is a wrapper around ssh.NewClientConn

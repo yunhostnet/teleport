@@ -235,15 +235,20 @@ func (s *SessionRegistry) getParties(ctx *ServerContext) (parties []*party) {
 	return parties
 }
 
-// notifyWinChange is called when an SSH server receives a command notifying
-// us that the terminal size has changed
+// NotifyWinChange is called to notify all members in the party that the PTY
+// size has changed. The notification is sent as a SSH request on the channel
+// and it is the responsibility of the client to update it's window size upon
+// receipt.
+// TODO(russjones): This function doesn't return anything.
 func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *ServerContext) error {
 	if ctx.session == nil {
 		s.log.Debugf("Unable to update window size, no session found in context.")
 		return nil
 	}
 	sid := ctx.session.id
-	// report this to the event/audit log:
+
+	// Report the updated window size to the event log (this is so the sessions
+	// can be replayed correctly)
 	ctx.session.recorder.alog.EmitAuditEvent(events.ResizeEvent, events.EventFields{
 		events.EventNamespace: s.srv.GetNamespace(),
 		events.SessionEventID: sid,
@@ -251,24 +256,30 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 		events.EventUser:      ctx.Identity.TeleportUser,
 		events.TerminalSize:   params.Serialize(),
 	})
-	err := ctx.session.term.SetWinSize(params)
-	if err != nil {
-		return trace.Wrap(err)
-	}
 
-	// notify all connected parties about the change in real time
-	// (if they're capable)
+	// TODO(russjones): Why do we update the terminal here again? I think we can
+	// remove this.
+	//err := ctx.session.term.SetWinSize(params)
+	//if err != nil {
+	//	return trace.Wrap(err)
+	//}
+
+	// Notify all members of the party that the size of the window has changed.
 	for _, p := range s.getParties(ctx) {
-		p.onWindowChanged(&params)
+		p.sconn.SendRequest("x-teleport-window-change", false, []byte(params.Serialize()))
 	}
 
-	go func() {
-		err := s.srv.GetSessionServer().UpdateSession(
-			rsession.UpdateRequest{ID: sid, TerminalParams: &params, Namespace: s.srv.GetNamespace()})
-		if err != nil {
-			s.log.Errorf("Unable to update session %v: %v", sid, err)
-		}
-	}()
+	// TODO(russjones): I think we can get rid of this here as well.
+	//go func() {
+	//	err := s.srv.GetSessionServer().UpdateSession(
+	//		rsession.UpdateRequest{
+	//			ID:             sid,
+	//			TerminalParams: &params,
+	//			Namespace:      s.srv.GetNamespace()})
+	//	if err != nil {
+	//		s.log.Errorf("Unable to update session %v: %v", sid, err)
+	//	}
+	//}()
 	return nil
 }
 
@@ -1075,6 +1086,10 @@ func (p *party) termSizePusher(ch ssh.Channel) {
 	for err == nil {
 		select {
 		case newSize := <-p.termSizeC:
+			fmt.Printf("--> Sending x-teleport-window-size to remote=%v, local=%v\n", p.sconn.RemoteAddr(), p.sconn.LocalAddr())
+			p.sconn.SendRequest("x-teleport-window-size", false, nil)
+			ch.SendRequest("x-teleport-window-size", false, nil)
+
 			n, err = ch.Write(newSize)
 			if err == io.EOF {
 				continue
