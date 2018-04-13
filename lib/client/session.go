@@ -347,6 +347,7 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 				continue
 			}
 			lastSize := lastParams.Winsize()
+			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
 
 			// Terminal size has not changed, don't do anything.
 			if currSize.Width == lastSize.Width && currSize.Height != lastSize.Height {

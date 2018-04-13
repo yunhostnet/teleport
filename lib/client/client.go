@@ -21,7 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
+	//"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -455,7 +455,6 @@ func (c *NodeClient) handleGlobalRequests(ctx context.Context, requestCh <-chan 
 		case r := <-requestCh:
 			switch r.Type {
 			case "x-teleport-window-change":
-				fmt.Printf("--> Client: %v\r\n", string(r.Payload))
 				c.windowChangeCh <- r
 			default:
 				// This handles keepalive messages and matches

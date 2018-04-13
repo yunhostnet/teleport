@@ -257,15 +257,19 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 		events.TerminalSize:   params.Serialize(),
 	})
 
-	// TODO(russjones): Why do we update the terminal here again? I think we can
-	// remove this.
-	//err := ctx.session.term.SetWinSize(params)
-	//if err != nil {
-	//	return trace.Wrap(err)
-	//}
+	// Why does this have to be reset again, it was set in the caller??
+	err := ctx.session.term.SetWinSize(params)
+	if err != nil {
+		return trace.Wrap(err)
+	}
 
 	// Notify all members of the party that the size of the window has changed.
 	for _, p := range s.getParties(ctx) {
+		err := p.s.term.SetWinSize(params)
+		if err != nil {
+			s.log.Warnf("Unable to update window size: %v.", err)
+		}
+
 		p.sconn.SendRequest("x-teleport-window-change", false, []byte(params.Serialize()))
 		p.onWindowChanged(&params)
 	}
@@ -838,16 +842,16 @@ func (s *session) pollAndSync() {
 			Active:    &active,
 			Parties:   nil,
 		})
-		winSize, err := s.term.GetWinSize()
-		if err != nil {
-			return err
-		}
-		termSizeChanged := (int(winSize.Width) != sess.TerminalParams.W ||
-			int(winSize.Height) != sess.TerminalParams.H)
-		if termSizeChanged {
-			s.log.Debugf("Terminal changed from: %v to %v", sess.TerminalParams, winSize)
-			err = s.term.SetWinSize(sess.TerminalParams)
-		}
+		//winSize, err := s.term.GetWinSize()
+		//if err != nil {
+		//	return err
+		//}
+		//termSizeChanged := (int(winSize.Width) != sess.TerminalParams.W ||
+		//	int(winSize.Height) != sess.TerminalParams.H)
+		//if termSizeChanged {
+		//	s.log.Debugf("Terminal changed from: %v to %v", sess.TerminalParams, winSize)
+		//	err = s.term.SetWinSize(sess.TerminalParams)
+		//}
 		return err
 	}
 
@@ -1087,10 +1091,6 @@ func (p *party) termSizePusher(ch ssh.Channel) {
 	for err == nil {
 		select {
 		case newSize := <-p.termSizeC:
-			fmt.Printf("--> Sending x-teleport-window-size to remote=%v, local=%v\n", p.sconn.RemoteAddr(), p.sconn.LocalAddr())
-			p.sconn.SendRequest("x-teleport-window-size", false, nil)
-			ch.SendRequest("x-teleport-window-size", false, nil)
-
 			n, err = ch.Write(newSize)
 			if err == io.EOF {
 				continue
