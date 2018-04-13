@@ -26,13 +26,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	//"time"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/gravitational/teleport"
-	//"github.com/gravitational/teleport/lib/defaults"
+	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/utils"
@@ -287,17 +287,10 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 	signal.Notify(sigC, syscall.SIGWINCH)
 	currentSize, _ := term.GetWinsize(0)
 
-	//// start the timer which asks for server-side window size changes:
-	//siteClient, err := ns.nodeClient.Proxy.ConnectToSite(context.TODO(), true)
-	//if err != nil {
-	//	log.Error(err)
-	//	return
-	//}
-	//tick := time.NewTicker(defaults.SessionRefreshPeriod)
-	//defer tick.Stop()
+	tickerCh := time.NewTicker(defaults.SessionRefreshPeriod)
+	defer tickerCh.Stop()
 
-	//var prevSess *session.Session
-	var prevSess *session.TerminalParams
+	var lastParams *session.TerminalParams
 
 	for {
 		select {
@@ -326,42 +319,47 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 			if err != nil {
 				log.Warnf("[CLIENT] failed to send window change reqest: %v", err)
 			}
+		// Update and store the current window size as it comes from the remote server.
 		case r := <-ns.NodeClient().WindowChangeRequests():
+			var err error
+
 			parts := strings.Split(string(r.Payload), ":")
 			width, _ := strconv.Atoi(parts[0])
 			height, _ := strconv.Atoi(parts[1])
-			sess, err := session.NewTerminalParamsFromInt(width, height)
+
+			lastParams, err = session.NewTerminalParamsFromInt(width, height)
 			if err != nil {
 				log.Warnf("Failed to update window size: %v.", err)
 				continue
 			}
-
-			// no previous session
-			if prevSess == nil {
-				prevSess = sess
+		// Buffer and update the terminal size every 2 seconds. This leads to a much
+		// nicer user experience.
+		case <-tickerCh.C:
+			// If no terminal size has been received, then wait until it has.
+			if lastParams == nil {
 				continue
 			}
-			// nothing changed
-			if prevSess.W == sess.W && prevSess.H == sess.H {
-				continue
-			}
-			log.Infof("[CLIENT] updating session to %v %v", width, height)
-			//log.Infof("[CLIENT] updating the session %v with %d parties", sess.ID, len(sess.Parties))
-
-			newSize := sess.Winsize()
-			currentSize, err = term.GetWinsize(0)
+			// Get the current size of the terminal and the last size report that was
+			// received.
+			currSize, err := term.GetWinsize(0)
 			if err != nil {
-				log.Error(err)
+				log.Warnf("Unable to get current terminal size: %v.", err)
+				continue
 			}
-			if currentSize.Width != newSize.Width || currentSize.Height != newSize.Height {
-				// ok, something have changed, let's resize to the new parameters
-				//err = term.SetWinsize(0, newSize)
-				//if err != nil {
-				//	log.Error(err)
-				//}
-				os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", newSize.Height, newSize.Width)))
+			lastSize := lastParams.Winsize()
+
+			// Terminal size has not changed, don't do anything.
+			if currSize.Width == lastSize.Width && currSize.Height != lastSize.Height {
+				continue
 			}
-			prevSess = sess
+
+			// Terminal size has changed....
+			err = term.SetWinsize(0, lastSize)
+			if err != nil {
+				log.Warnf("Unable to update terminal size: %v.\n", err)
+				continue
+			}
+			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
 		case <-ns.closer.C:
 			return
 		}
