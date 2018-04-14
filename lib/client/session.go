@@ -349,21 +349,23 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 			}
 			lastSize := lastParams.Winsize()
 
-			// Redraw right away.
-			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
-
 			// Terminal size has not changed, don't do anything.
 			if currSize.Width == lastSize.Width && currSize.Height != lastSize.Height {
 				continue
 			}
 
-			// Terminal size has changed....
+			// This changes the size of the local PTY. This is what's drawn within the window.
 			err = term.SetWinsize(0, lastSize)
 			if err != nil {
 				log.Warnf("Unable to update terminal size: %v.\n", err)
 				continue
 			}
-			//os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
+
+			go func() {
+				time.Sleep(1 * time.Second)
+				// This is what we use to resize the physical window (chrome) itself.
+				os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
+			}()
 		case <-ns.closer.C:
 			return
 		}
