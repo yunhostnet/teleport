@@ -23,7 +23,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
+	//"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -319,21 +319,11 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 			if err != nil {
 				log.Warnf("[CLIENT] failed to send window change reqest: %v", err)
 			}
-		// Update and store the current window size as it comes from the remote server.
-		case r := <-ns.NodeClient().WindowChangeRequests():
-			var err error
-
-			parts := strings.Split(string(r.Payload), ":")
-			width, _ := strconv.Atoi(parts[0])
-			height, _ := strconv.Atoi(parts[1])
-
-			lastParams, err = session.NewTerminalParamsFromInt(width, height)
-			if err != nil {
-				log.Warnf("Failed to update window size: %v.", err)
-				continue
-			}
-		// Buffer and update the terminal size every 2 seconds. This leads to a much
-		// nicer user experience.
+		// Update and store the current session state as it comes from the remote
+		// server.
+		case l := <-ns.nodeClient.TC.SessionEventCh():
+			fmt.Printf("--> session: updated last params\r\n")
+			lastParams = &l.TerminalParams
 		case <-tickerCh.C:
 			// If no terminal size has been received, then wait until it has.
 			if lastParams == nil {
@@ -361,11 +351,8 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 				continue
 			}
 
-			go func() {
-				time.Sleep(1 * time.Second)
-				// This is what we use to resize the physical window (chrome) itself.
-				os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
-			}()
+			// This is what we use to resize the physical window (chrome) itself.
+			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
 		case <-ns.closer.C:
 			return
 		}

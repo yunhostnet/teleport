@@ -36,6 +36,7 @@ import (
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/services"
+	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/sshutils/scp"
 	"github.com/gravitational/teleport/lib/utils"
@@ -64,8 +65,7 @@ type NodeClient struct {
 	Namespace string
 	Client    *ssh.Client
 	Proxy     *ProxyClient
-
-	windowChangeCh chan *ssh.Request
+	TC        *TeleportClient
 }
 
 // GetSites returns list of the "sites" (AKA teleport clusters) connected to the proxy
@@ -431,10 +431,10 @@ func (proxy *ProxyClient) ConnectToNode(ctx context.Context, nodeAddress string,
 	client := ssh.NewClient(conn, chans, emptyCh)
 
 	nc := &NodeClient{
-		Client:         client,
-		Proxy:          proxy,
-		Namespace:      defaults.Namespace,
-		windowChangeCh: make(chan *ssh.Request, 10),
+		Client:    client,
+		Proxy:     proxy,
+		Namespace: defaults.Namespace,
+		TC:        proxy.teleportClient,
 	}
 
 	// Start a goroutine that will run for the duration of the client to process
@@ -445,17 +445,21 @@ func (proxy *ProxyClient) ConnectToNode(ctx context.Context, nodeAddress string,
 	return nc, nil
 }
 
-func (c *NodeClient) WindowChangeRequests() <-chan *ssh.Request {
-	return c.windowChangeCh
-}
-
 func (c *NodeClient) handleGlobalRequests(ctx context.Context, requestCh <-chan *ssh.Request) {
 	for {
 		select {
 		case r := <-requestCh:
 			switch r.Type {
-			case "x-teleport-window-change":
-				c.windowChangeCh <- r
+			case "x-teleport-session-change":
+				var s session.Session
+
+				err := json.Unmarshal(r.Payload, &s)
+				if err != nil {
+					log.Warnf("Unable to unmarshal %v global request: %v: %v", r.Type, string(r.Payload), err)
+					continue
+				}
+
+				c.TC.SendSessionEvent(s)
 			default:
 				// This handles keepalive messages and matches
 				// the behaviour of OpenSSH.
@@ -547,18 +551,18 @@ func (client *NodeClient) Download(remoteSourcePath, localDestinationPath string
 // scp runs remote scp command(shellCmd) on the remote server and
 // runs local scp handler using scpConf
 func (client *NodeClient) scp(scpCommand scp.Command, shellCmd string, errWriter io.Writer) error {
-	session, err := client.Client.NewSession()
+	s, err := client.Client.NewSession()
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	defer session.Close()
+	defer s.Close()
 
-	stdin, err := session.StdinPipe()
+	stdin, err := s.StdinPipe()
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	stdout, err := session.StdoutPipe()
+	stdout, err := s.StdoutPipe()
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -580,7 +584,7 @@ func (client *NodeClient) scp(scpCommand scp.Command, shellCmd string, errWriter
 		close(closeC)
 	}()
 
-	runErr := session.Run(shellCmd)
+	runErr := s.Run(shellCmd)
 	if runErr != nil && err == nil {
 		err = runErr
 	}

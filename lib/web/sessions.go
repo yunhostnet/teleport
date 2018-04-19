@@ -57,6 +57,7 @@ type SessionContext struct {
 	remoteClt map[string]auth.ClientI
 	parent    *sessionCache
 	closers   []io.Closer
+	tc        *client.TeleportClient
 }
 
 // getTerminal finds and returns an active web terminal for a given session:

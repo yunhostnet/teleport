@@ -18,6 +18,7 @@ package srv
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -265,8 +266,16 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 
 	// Notify all members of the party that the size of the window has changed.
 	for _, p := range s.getParties(ctx) {
-		p.sconn.SendRequest("x-teleport-window-change", false, []byte(params.Serialize()))
-		p.onWindowChanged(&params)
+		sessionChange, err := json.Marshal(rsession.Session{
+			ID:             sid,
+			Namespace:      s.srv.GetNamespace(),
+			TerminalParams: params,
+		})
+		if err != nil {
+			s.log.Warnf("Unable to update %v about updated session: %v", p, err)
+			continue
+		}
+		p.sconn.SendRequest("x-teleport-session-change", false, sessionChange)
 	}
 
 	// TODO(russjones): I think we can get rid of this here as well.

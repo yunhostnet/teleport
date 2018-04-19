@@ -17,6 +17,7 @@ limitations under the License.
 package web
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -88,26 +89,26 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 		io.Copy(ioutil.Discard, ws)
 	}()
 
-	eventsCursor := -1
-	emptyEventList := make([]events.EventFields, 0)
+	//eventsCursor := -1
+	//emptyEventList := make([]events.EventFields, 0)
 
-	pollEvents := func() []events.EventFields {
-		// ask for any events than happened since the last call:
-		re, err := clt.GetSessionEvents(w.namespace, w.sessionID, eventsCursor+1, false)
-		if err != nil {
-			if !trace.IsNotFound(err) {
-				log.Error(err)
-			}
-			return emptyEventList
-		}
-		batchLen := len(re)
-		if batchLen == 0 {
-			return emptyEventList
-		}
-		// advance the cursor, so next time we'll ask for the latest:
-		eventsCursor = re[batchLen-1].GetInt(events.EventCursor)
-		return re
-	}
+	//pollEvents := func() []events.EventFields {
+	//	// ask for any events than happened since the last call:
+	//	re, err := clt.GetSessionEvents(w.namespace, w.sessionID, eventsCursor+1, false)
+	//	if err != nil {
+	//		if !trace.IsNotFound(err) {
+	//			log.Error(err)
+	//		}
+	//		return emptyEventList
+	//	}
+	//	batchLen := len(re)
+	//	if batchLen == 0 {
+	//		return emptyEventList
+	//	}
+	//	// advance the cursor, so next time we'll ask for the latest:
+	//	eventsCursor = re[batchLen-1].GetInt(events.EventCursor)
+	//	return re
+	//}
 
 	ticker := time.NewTicker(w.pollPeriod)
 	defer ticker.Stop()
@@ -117,42 +118,56 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 	for {
 		// wait for next timer tick or a signal to abort:
 		select {
+		case se := <-w.ctx.tc.SessionEventCh():
+			event := events.EventFields{
+				"event": "resize",
+				"sid":   se.ID.String(),
+				"size":  fmt.Sprintf("%d:%d", se.TerminalParams.Winsize().Width, se.TerminalParams.Winsize().Height),
+				"time":  time.Now().String(),
+			}
+			sse := &sessionStreamEvent{
+				Events: []events.EventFields{event},
+			}
+			if err := websocket.JSON.Send(ws, sse); err != nil {
+				log.Error(err)
+			}
 		case <-ticker.C:
+			//newEvents := pollEvents()
+			sess, err := clt.GetSession(w.namespace, w.sessionID)
+			if err != nil {
+				if trace.IsNotFound(err) {
+					continue
+				}
+				log.Error(err)
+			}
+			if sess == nil {
+				log.Warningf("invalid session ID: %v", w.sessionID)
+				continue
+			}
+			servers, err := clt.GetNodes(w.namespace)
+			if err != nil {
+				log.Error(err)
+			}
+			//if len(newEvents) > 0 {
+			//	log.Infof("[WEB] streaming for %v. Events: %v, Nodes: %v, Parties: %v",
+			//		w.sessionID, len(newEvents), len(servers), len(sess.Parties))
+			//}
+
+			// push events to the web client
+			event := &sessionStreamEvent{
+				//Events:  newEvents,
+				Events:  []events.EventFields{},
+				Session: sess,
+				Servers: services.ServersToV1(servers),
+			}
+			if err := websocket.JSON.Send(ws, event); err != nil {
+				log.Error(err)
+			}
 		case <-w.closeC:
 			log.Infof("[web] session.stream() exited")
 			return nil
 		}
 
-		newEvents := pollEvents()
-		sess, err := clt.GetSession(w.namespace, w.sessionID)
-		if err != nil {
-			if trace.IsNotFound(err) {
-				continue
-			}
-			log.Error(err)
-		}
-		if sess == nil {
-			log.Warningf("invalid session ID: %v", w.sessionID)
-			continue
-		}
-		servers, err := clt.GetNodes(w.namespace)
-		if err != nil {
-			log.Error(err)
-		}
-		if len(newEvents) > 0 {
-			log.Infof("[WEB] streaming for %v. Events: %v, Nodes: %v, Parties: %v",
-				w.sessionID, len(newEvents), len(servers), len(sess.Parties))
-		}
-
-		// push events to the web client
-		event := &sessionStreamEvent{
-			Events:  newEvents,
-			Session: sess,
-			Servers: services.ServersToV1(servers),
-		}
-		if err := websocket.JSON.Send(ws, event); err != nil {
-			log.Error(err)
-		}
 	}
 }
 

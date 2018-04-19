@@ -340,8 +340,12 @@ type TeleportClient struct {
 	localAgent *LocalKeyAgent
 
 	// OnShellCreated gets called when the shell is created. It's
-	// safe to keep it nil
+	// safe to keep it nil.
 	OnShellCreated ShellCreatedCallback
+
+	// sessionEvents is a channel used to inform clients about changes that have
+	// occured in the session like party membership or window size changes.
+	sessionEvents chan session.Session
 }
 
 // ShellCreatedCallback can be supplied for every teleport client. It will
@@ -414,6 +418,8 @@ func NewClient(c *Config) (tc *TeleportClient, err error) {
 			tc.HostKeyCallback = tc.localAgent.CheckHostSignature
 		}
 	}
+
+	tc.sessionEvents = make(chan session.Session, 10)
 
 	return tc, nil
 }
@@ -1320,6 +1326,17 @@ func (tc *TeleportClient) u2fLogin(pub []byte) (*auth.SSHLoginResponse, error) {
 		tc.CertificateFormat)
 
 	return response, trace.Wrap(err)
+}
+
+// SendSessionEvent adds a session event to channel.
+func (tc *TeleportClient) SendSessionEvent(s session.Session) {
+	tc.sessionEvents <- s
+}
+
+// SessionEventCh returns a channel that can be used to listen for changes to
+// the session on the backend.
+func (tc *TeleportClient) SessionEventCh() <-chan session.Session {
+	return tc.sessionEvents
 }
 
 // loopbackPool reads trusted CAs if it finds it in a predefined location
