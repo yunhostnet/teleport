@@ -282,54 +282,64 @@ func (ns *NodeSession) allocateTerminal(termType string, s *ssh.Session) (io.Rea
 }
 
 func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
-	// sibscribe for "terminal resized" signal:
-	sigC := make(chan os.Signal, 1)
-	signal.Notify(sigC, syscall.SIGWINCH)
-	currentSize, _ := term.GetWinsize(0)
+	// SIGWINCH is sent to the process when the window size of the terminal has
+	// changed.
+	sigwinchCh := make(chan os.Signal, 1)
+	signal.Notify(sigwinchCh, syscall.SIGWINCH)
 
+	lastSize, err := term.GetWinsize(0)
+	if err != nil {
+		log.Errorf("Unable to get window size: %v", err)
+		return
+	}
+
+	// Sync the local terminal with size received from the remote server every
+	// two seconds. If we try and do it live, synchronization jitters occur.
 	tickerCh := time.NewTicker(defaults.SessionRefreshPeriod)
 	defer tickerCh.Stop()
 
-	var lastParams *session.TerminalParams
-
 	for {
 		select {
-		// our own terminal window got resized:
-		case sig := <-sigC:
-			if sig == nil {
+		// The client updated the size of the local PTY. This change needs to occur
+		// on the remote PTY.
+		case sigwinch := <-sigwinchCh:
+			if sigwinch == nil {
 				return
 			}
-			// get the size:
-			winSize, err := term.GetWinsize(0)
+
+			currSize, err := term.GetWinsize(0)
 			if err != nil {
-				log.Warnf("[CLIENT] Error getting size: %s", err)
+				log.Warnf("Unable to get window size: %v.", err)
 				break
 			}
-			// it's the result of our own size change (see below)
-			if winSize.Height == currentSize.Height && winSize.Width == currentSize.Width {
-				continue
-			}
-			// send the new window size to the server
-			_, err = s.SendRequest(
-				sshutils.WindowChangeRequest, false,
-				ssh.Marshal(sshutils.WinChangeReqParams{
-					W: uint32(winSize.Width),
-					H: uint32(winSize.Height),
-				}))
-			if err != nil {
-				log.Warnf("[CLIENT] failed to send window change reqest: %v", err)
-			}
-		// Update and store the current session state as it comes from the remote
-		// server.
-		case l := <-ns.nodeClient.TC.SessionEventCh():
-			fmt.Printf("--> session: updated last params\r\n")
-			lastParams = &l.TerminalParams
-		case <-tickerCh.C:
-			// If no terminal size has been received, then wait until it has.
-			if lastParams == nil {
+
+			if currSize.Height == lastSize.Height && currSize.Width == lastSize.Width {
 				continue
 			}
 
+			_, err = s.SendRequest(
+				sshutils.WindowChangeRequest,
+				false,
+				ssh.Marshal(sshutils.WinChangeReqParams{
+					W: uint32(currSize.Width),
+					H: uint32(currSize.Height),
+				}))
+			if err != nil {
+				log.Warnf("Unable to send %v reqest: %v.", sshutils.WindowChangeRequest, err)
+				continue
+			}
+
+			log.Debugf("Updated window size from %v to %v due to SIGWINCH.", lastSize, currSize)
+
+			lastSize = currSize
+
+		// Extract and store size as it comes from the remote server.
+		case l := <-ns.nodeClient.TC.SessionEventCh():
+			lastSize = l.TerminalParams.Winsize()
+			log.Debugf("Recevied windw size %v from node.\n", lastSize)
+
+		// Update size of local terminal with the last size received from remote server.
+		case <-tickerCh.C:
 			// Get the current size of the terminal and the last size report that was
 			// received.
 			currSize, err := term.GetWinsize(0)
@@ -337,14 +347,14 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 				log.Warnf("Unable to get current terminal size: %v.", err)
 				continue
 			}
-			lastSize := lastParams.Winsize()
 
 			// Terminal size has not changed, don't do anything.
-			if currSize.Width == lastSize.Width && currSize.Height != lastSize.Height {
+			if currSize.Width == lastSize.Width && currSize.Height == lastSize.Height {
 				continue
 			}
 
-			// This changes the size of the local PTY. This is what's drawn within the window.
+			// This changes the size of the local PTY. This will re-draw what's within
+			// the window.
 			err = term.SetWinsize(0, lastSize)
 			if err != nil {
 				log.Warnf("Unable to update terminal size: %v.\n", err)
@@ -353,6 +363,8 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 
 			// This is what we use to resize the physical window (chrome) itself.
 			os.Stdout.Write([]byte(fmt.Sprintf("\x1b[8;%d;%dt", lastSize.Height, lastSize.Width)))
+
+			log.Debugf("Updated window size from to %v due to remote window change.", currSize, lastSize)
 		case <-ns.closer.C:
 			return
 		}

@@ -658,10 +658,15 @@ func (s *Server) HandleNewChan(nc net.Conn, sconn *ssh.ServerConn, nch ssh.NewCh
 
 	channelType := nch.ChannelType()
 	if s.proxyMode {
-		if channelType == "session" { // interactive sessions
+		// Channels of type "session" handle requests that are invovled in running
+		// commands on a server. In the case of proxy mode subsystem and agent
+		// forwarding requests occur over the "session" channel.
+		if channelType == "session" {
 			ch, requests, err := nch.Accept()
 			if err != nil {
-				log.Infof("could not accept channel (%s)", err)
+				log.Warnf("Unable to accept channel: %v", err)
+				nch.Reject(ssh.ConnectionFailed, fmt.Sprintf("unable to accept channel: %v", err))
+				return
 			}
 			go s.handleSessionRequests(sconn, identityContext, ch, requests)
 		} else {
@@ -671,26 +676,29 @@ func (s *Server) HandleNewChan(nc net.Conn, sconn *ssh.ServerConn, nch ssh.NewCh
 	}
 
 	switch channelType {
-	// a client requested the terminal size to be sent along with every
-	// session message (Teleport-specific SSH channel for web-based terminals)
-	case "x-teleport-request-resize-events":
-		ch, _, _ := nch.Accept()
-		go s.handleTerminalResize(sconn, ch)
-	case "session": // interactive sessions
+	// Channels of type "session" handle requests that are invovled in running
+	// commands on a server, subsystem requests, and agent forwarding.
+	case "session":
 		ch, requests, err := nch.Accept()
 		if err != nil {
-			log.Infof("could not accept channel (%s)", err)
+			log.Warnf("Unable to accept channel: %v", err)
+			nch.Reject(ssh.ConnectionFailed, fmt.Sprintf("unable to accept channel: %v", err))
+			return
 		}
 		go s.handleSessionRequests(sconn, identityContext, ch, requests)
-	case "direct-tcpip": //port forwarding
+	// Channels of type "direct-tcpip" handles request for port forwarding.
+	case "direct-tcpip":
 		req, err := sshutils.ParseDirectTCPIPReq(nch.ExtraData())
 		if err != nil {
-			log.Errorf("failed to parse request data: %v, err: %v", string(nch.ExtraData()), err)
+			log.Errorf("Failed to parse request data: %v, err: %v", string(nch.ExtraData()), err)
 			nch.Reject(ssh.UnknownChannelType, "failed to parse direct-tcpip request")
+			return
 		}
 		ch, _, err := nch.Accept()
 		if err != nil {
-			log.Infof("could not accept channel (%s)", err)
+			log.Warnf("Unable to accept channel: %v", err)
+			nch.Reject(ssh.ConnectionFailed, fmt.Sprintf("unable to accept channel: %v", err))
+			return
 		}
 		go s.handleDirectTCPIPRequest(sconn, identityContext, ch, req)
 	default:
@@ -778,20 +786,6 @@ func (s *Server) handleDirectTCPIPRequest(sconn *ssh.ServerConn, identityContext
 			return
 		}
 		ctx.Debugf("Closing PAM context for session %v.", ctx.SessionID())
-	}
-}
-
-// handleTerminalResize is called by the web proxy via its SSH connection.
-// when a web browser connects to the web API, the web proxy asks us,
-// by creating this new SSH channel, to start injecting the terminal size
-// into every SSH write back to it.
-//
-// this is the only way to make web-based terminal UI not break apart
-// when window changes its size
-func (s *Server) handleTerminalResize(sconn *ssh.ServerConn, ch ssh.Channel) {
-	err := s.reg.PushTermSizeToParty(sconn, ch)
-	if err != nil {
-		log.Warnf("Unable to push terminal size to party: %v", err)
 	}
 }
 

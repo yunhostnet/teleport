@@ -507,13 +507,8 @@ func (s *Server) handleChannel(nch ssh.NewChannel) {
 	channelType := nch.ChannelType()
 
 	switch channelType {
-	// A client requested the terminal size to be sent along with every
-	// session message (Teleport-specific SSH channel for web-based terminals).
-	case "x-teleport-request-resize-events":
-		ch, _, _ := nch.Accept()
-		go s.handleTerminalResize(ch)
 	// Channels of type "session" handle requests that are invovled in running
-	// commands on a server.
+	// commands on a server, subsystem requests, and agent forwarding.
 	case "session":
 		ch, requests, err := nch.Accept()
 		if err != nil {
@@ -595,20 +590,6 @@ func (s *Server) handleDirectTCPIPRequest(ch ssh.Channel, req *sshutils.DirectTC
 	}()
 
 	wg.Wait()
-}
-
-// handleTerminalResize is called by the web proxy via its SSH connection.
-// when a web browser connects to the web API, the web proxy asks us,
-// by creating this new SSH channel, to start injecting the terminal size
-// into every SSH write back to it.
-//
-// This is the only way to make web-based terminal UI not break apart
-// when window changes its size.
-func (s *Server) handleTerminalResize(channel ssh.Channel) {
-	err := s.sessionRegistry.PushTermSizeToParty(s.sconn, channel)
-	if err != nil {
-		s.log.Warnf("Unable to push terminal size to party: %v", err)
-	}
 }
 
 // handleSessionRequests handles out of band session requests once the session

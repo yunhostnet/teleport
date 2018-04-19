@@ -110,8 +110,9 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 	//	return re
 	//}
 
-	ticker := time.NewTicker(w.pollPeriod)
-	defer ticker.Stop()
+	tickerCh := time.NewTicker(5 * time.Second)
+	defer tickerCh.Stop()
+
 	defer w.Close()
 
 	// keep polling in a loop:
@@ -131,7 +132,7 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 			if err := websocket.JSON.Send(ws, sse); err != nil {
 				log.Error(err)
 			}
-		case <-ticker.C:
+		case <-tickerCh.C:
 			//newEvents := pollEvents()
 			sess, err := clt.GetSession(w.namespace, w.sessionID)
 			if err != nil {

@@ -449,8 +449,13 @@ func (c *NodeClient) handleGlobalRequests(ctx context.Context, requestCh <-chan 
 	for {
 		select {
 		case r := <-requestCh:
+			// When the channel is closing, nil is returned.
+			if r == nil {
+				break
+			}
+
 			switch r.Type {
-			case "x-teleport-session-change":
+			case teleport.WindowChangeRequest:
 				var s session.Session
 
 				err := json.Unmarshal(r.Payload, &s)

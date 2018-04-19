@@ -237,10 +237,8 @@ func (s *SessionRegistry) getParties(ctx *ServerContext) (parties []*party) {
 }
 
 // NotifyWinChange is called to notify all members in the party that the PTY
-// size has changed. The notification is sent as a SSH request on the channel
-// and it is the responsibility of the client to update it's window size upon
-// receipt.
-// TODO(russjones): This function doesn't return anything.
+// size has changed. The notification is sent as a global SSH request and it
+// is the responsibility of the client to update it's window size upon receipt.
 func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *ServerContext) error {
 	if ctx.session == nil {
 		s.log.Debugf("Unable to update window size, no session found in context.")
@@ -249,7 +247,7 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 	sid := ctx.session.id
 
 	// Report the updated window size to the event log (this is so the sessions
-	// can be replayed correctly)
+	// can be replayed correctly).
 	ctx.session.recorder.alog.EmitAuditEvent(events.ResizeEvent, events.EventFields{
 		events.EventNamespace: s.srv.GetNamespace(),
 		events.SessionEventID: sid,
@@ -258,14 +256,34 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 		events.TerminalSize:   params.Serialize(),
 	})
 
-	// Why does this have to be reset again, it was set in the caller??
+	// Update the size of the server side PTY.
 	err := ctx.session.term.SetWinSize(params)
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	// Notify all members of the party that the size of the window has changed.
-	for _, p := range s.getParties(ctx) {
+	// If sessions are being recorded at the proxy, sessions can not be shared.
+	// In that situation, PTY size information does not need to be propagated
+	// back to all clients and we can return right away.
+	clusterConfig, err := s.srv.GetAccessPoint().GetClusterConfig()
+	if err != nil {
+		s.log.Errorf("Unable to propagate window size: %v", err)
+		return nil
+	}
+	if clusterConfig.GetSessionRecording() == services.RecordAtProxy {
+		return nil
+	}
+
+	// Notify all members of the party (except originator) that the size of the
+	// window has changed so the client can update it's own local PTY. Note that
+	// OpenSSH clients will ignore this and not update their own local PTY.
+	partyMembers := s.getParties(ctx)
+	for _, p := range partyMembers {
+		// Don't send the window change notification back to the originator.
+		if p.ctx.ID() == ctx.ID() {
+			continue
+		}
+
 		sessionChange, err := json.Marshal(rsession.Session{
 			ID:             sid,
 			Namespace:      s.srv.GetNamespace(),
@@ -275,20 +293,11 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 			s.log.Warnf("Unable to update %v about updated session: %v", p, err)
 			continue
 		}
-		p.sconn.SendRequest("x-teleport-session-change", false, sessionChange)
+		p.sconn.SendRequest(teleport.WindowChangeRequest, false, sessionChange)
+
+		s.log.Debugf("Sent %v window change notification to %v.", params, p.sconn.RemoteAddr())
 	}
 
-	// TODO(russjones): I think we can get rid of this here as well.
-	//go func() {
-	//	err := s.srv.GetSessionServer().UpdateSession(
-	//		rsession.UpdateRequest{
-	//			ID:             sid,
-	//			TerminalParams: &params,
-	//			Namespace:      s.srv.GetNamespace()})
-	//	if err != nil {
-	//		s.log.Errorf("Unable to update session %v: %v", sid, err)
-	//	}
-	//}()
 	return nil
 }
 
@@ -307,43 +316,6 @@ func (s *SessionRegistry) broadcastResult(sid rsession.ID, r ExecResult) error {
 func (s *SessionRegistry) findSession(id rsession.ID) (*session, bool) {
 	sess, found := s.sessions[id]
 	return sess, found
-}
-
-func (r *SessionRegistry) PushTermSizeToParty(sconn *ssh.ServerConn, ch ssh.Channel) error {
-	// the party may not be immediately available for this connection,
-	// keep asking for a full second:
-	for i := 0; i < 10; i++ {
-		party := r.partyForConnection(sconn)
-		if party == nil {
-			time.Sleep(time.Millisecond * 100)
-			continue
-		}
-
-		// this starts a loop which will keep updating the terminal
-		// size for every SSH write back to this connection
-		party.termSizePusher(ch)
-		return nil
-	}
-
-	return trace.Errorf("unable to push term size to party")
-}
-
-// partyForConnection finds an existing party which owns the given connection
-func (r *SessionRegistry) partyForConnection(sconn *ssh.ServerConn) *party {
-	r.Lock()
-	defer r.Unlock()
-
-	for _, session := range r.sessions {
-		session.Lock()
-		defer session.Unlock()
-		parties := session.parties
-		for _, party := range parties {
-			if party.sconn == sconn {
-				return party
-			}
-		}
-	}
-	return nil
 }
 
 // sessionRecorder implements io.Writer to be plugged into the multi-writer
@@ -664,9 +636,8 @@ func (s *session) start(ch ssh.Channel, ctx *ServerContext) error {
 		events.TerminalSize:    params.Serialize(),
 	})
 
-	// start asynchronous loop of synchronizing session state with
-	// the session server (terminal size and activity)
-	go s.pollAndSync()
+	// Start a heartbeat that marks this session as active in the backend.
+	go s.activeHeartbeat()
 
 	doneCh := make(chan bool, 1)
 
@@ -806,12 +777,11 @@ func (s *session) getNamespace() string {
 	return s.registry.srv.GetNamespace()
 }
 
-// pollAndSync is a loops forever trying to sync terminal size to what's in
-// the session (so all connected parties have the same terminal size) and
-// update the "active" field of the session. If the session are recorded at
-// the proxy, then this function does nothing as it's counterpart in the proxy
-// will do this work.
-func (s *session) pollAndSync() {
+// activeHeartbeat continued to update the session and mark it as active in
+// the backend as long as the session is not closed. If the session are
+// recorded at the proxy, then this function does nothing as it's counterpart
+// in the proxy will do this work.
+func (s *session) activeHeartbeat() {
 	// If sessions are being recorded at the proxy, an identical version of this
 	// goroutine is running in the proxy, which means it does not need to run here.
 	clusterConfig, err := s.registry.srv.GetAccessPoint().GetClusterConfig()
@@ -824,59 +794,35 @@ func (s *session) pollAndSync() {
 		return
 	}
 
-	s.log.Debugf("Starting poll and sync of terminal size to all parties.")
-	defer s.log.Debugf("Stopping poll and sync of terminal size to all parties.")
-
-	ns := s.getNamespace()
-
+	// If no session server (endpoint interface for active sessions) is passed in
+	// (for example Teleconsole does this) then nothing to sync.
 	sessionServer := s.registry.srv.GetSessionServer()
 	if sessionServer == nil {
 		return
 	}
-	errCount := 0
-	sync := func() error {
-		sess, err := sessionServer.GetSession(ns, s.id)
-		if err != nil || sess == nil {
-			return trace.Wrap(err)
-		}
-		var active = true
-		sessionServer.UpdateSession(rsession.UpdateRequest{
-			Namespace: ns,
-			ID:        sess.ID,
-			Active:    &active,
-			Parties:   nil,
-		})
-		//winSize, err := s.term.GetWinSize()
-		//if err != nil {
-		//	return err
-		//}
-		//termSizeChanged := (int(winSize.Width) != sess.TerminalParams.W ||
-		//	int(winSize.Height) != sess.TerminalParams.H)
-		//if termSizeChanged {
-		//	s.log.Debugf("Terminal changed from: %v to %v", sess.TerminalParams, winSize)
-		//	err = s.term.SetWinSize(sess.TerminalParams)
-		//}
-		return err
-	}
 
-	tick := time.NewTicker(defaults.TerminalSizeRefreshPeriod)
-	defer tick.Stop()
+	s.log.Debugf("Starting poll and sync of terminal size to all parties.")
+	defer s.log.Debugf("Stopping poll and sync of terminal size to all parties.")
+
+	tickerCh := time.NewTicker(10 * time.Second)
+	defer tickerCh.Stop()
+
+	// Loop as long as the session is active, updating the session in the backend.
 	for {
-		if err := sync(); err != nil {
-			s.log.Infof("Unable to sync terminal: %v", err)
-			errCount++
-			// if the error count keeps going up, this means we're stuck in
-			// a bad state: end this goroutine to avoid leaks
-			if errCount > maxTermSyncErrorCount {
-				return
-			}
-		} else {
-			errCount = 0
-		}
 		select {
+		case <-tickerCh.C:
+			var active = true
+			err := sessionServer.UpdateSession(rsession.UpdateRequest{
+				Namespace: s.getNamespace(),
+				ID:        s.id,
+				Active:    &active,
+				Parties:   nil,
+			})
+			if err != nil {
+				s.log.Warnf("Unable to update session %v as active: %v", s.id, err)
+			}
 		case <-s.closeC:
 			return
-		case <-tick.C:
 		}
 	}
 }
@@ -1063,48 +1009,6 @@ func newParty(s *session, ch ssh.Channel, ctx *ServerContext) *party {
 		sconn:     ctx.Conn,
 		termSizeC: make(chan []byte, 5),
 		closeC:    make(chan bool),
-	}
-}
-
-func (p *party) onWindowChanged(params *rsession.TerminalParams) {
-	p.log.Debugf("Window size changed to %v in party: %v", params.Serialize(), p.id)
-
-	p.Lock()
-	defer p.Unlock()
-
-	// this prefix will be appended to the end of every socker write going
-	// to this party:
-	prefix := []byte("\x00" + params.Serialize())
-	if p.termSizeC != nil && len(p.termSizeC) == 0 {
-		p.termSizeC <- prefix
-	}
-}
-
-// This goroutine pushes terminal resize events directly into a connected web client
-func (p *party) termSizePusher(ch ssh.Channel) {
-	var (
-		err error
-		n   int
-	)
-	defer func() {
-		if err != nil {
-			p.log.Error(err)
-		}
-	}()
-
-	for err == nil {
-		select {
-		case newSize := <-p.termSizeC:
-			n, err = ch.Write(newSize)
-			if err == io.EOF {
-				continue
-			}
-			if err != nil || n == 0 {
-				return
-			}
-		case <-p.closeC:
-			return
-		}
 	}
 }
 
