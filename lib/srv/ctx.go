@@ -19,7 +19,6 @@ package srv
 import (
 	"fmt"
 	"io"
-	"runtime"
 	"sync"
 	"sync/atomic"
 
