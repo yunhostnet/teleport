@@ -21,7 +21,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	//"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -456,18 +455,15 @@ func (c *NodeClient) handleGlobalRequests(ctx context.Context, requestCh <-chan 
 
 			switch r.Type {
 			case teleport.WindowChangeRequest:
-				var s session.Session
-
-				err := json.Unmarshal(r.Payload, &s)
+				// Parse window change request and write to the channel.
+				wc, err := session.NewWindowChangeRequest(r.Payload)
 				if err != nil {
-					log.Warnf("Unable to unmarshal %v global request: %v: %v", r.Type, string(r.Payload), err)
+					log.Warnf("Unable to parse window change request: %v: %v.", string(r.Payload), err)
 					continue
 				}
-
-				c.TC.SendSessionEvent(s)
+				c.TC.SendWindowChangeRequest(wc)
 			default:
-				// This handles keepalive messages and matches
-				// the behaviour of OpenSSH.
+				// This handles keepalive messages and matches the behaviour of OpenSSH.
 				r.Reply(false, nil)
 			}
 		case <-ctx.Done():

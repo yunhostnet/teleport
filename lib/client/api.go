@@ -343,9 +343,9 @@ type TeleportClient struct {
 	// safe to keep it nil.
 	OnShellCreated ShellCreatedCallback
 
-	// sessionEvents is a channel used to inform clients about changes that have
-	// occured in the session like party membership or window size changes.
-	sessionEvents chan session.Session
+	// windowChangeRequests is a channel used to inform clients about changes
+	// that have occured to the window size.
+	windowChangeRequests chan session.WindowChangeRequest
 }
 
 // ShellCreatedCallback can be supplied for every teleport client. It will
@@ -394,6 +394,12 @@ func NewClient(c *Config) (tc *TeleportClient, err error) {
 		tc.Stdin = os.Stdin
 	}
 
+	// Create a buffered channel to hold window change requests. This channel
+	// must be buffered because the SSH connection directly feeds into it. Delays
+	// in pulling messages off the global SSH request channel could lead to the
+	// connection hanging.
+	tc.windowChangeRequests = make(chan session.WindowChangeRequest, 10)
+
 	// sometimes we need to use external auth without using local auth
 	// methods, e.g. in automation daemons
 	if c.SkipLocalAuth {
@@ -418,8 +424,6 @@ func NewClient(c *Config) (tc *TeleportClient, err error) {
 			tc.HostKeyCallback = tc.localAgent.CheckHostSignature
 		}
 	}
-
-	tc.sessionEvents = make(chan session.Session, 10)
 
 	return tc, nil
 }
@@ -1328,15 +1332,15 @@ func (tc *TeleportClient) u2fLogin(pub []byte) (*auth.SSHLoginResponse, error) {
 	return response, trace.Wrap(err)
 }
 
-// SendSessionEvent adds a session event to channel.
-func (tc *TeleportClient) SendSessionEvent(s session.Session) {
-	tc.sessionEvents <- s
+// SendWindowChangeRequest adds a session.WindowChangeRequest to the channel.
+func (tc *TeleportClient) SendWindowChangeRequest(wc session.WindowChangeRequest) {
+	tc.windowChangeRequests <- wc
 }
 
-// SessionEventCh returns a channel that can be used to listen for changes to
-// the session on the backend.
-func (tc *TeleportClient) SessionEventCh() <-chan session.Session {
-	return tc.sessionEvents
+// WindowChangeRequests returns a channel that can be used to listen for
+// changes to the window size from the session on the backend.
+func (tc *TeleportClient) WindowChangeRequests() <-chan session.WindowChangeRequest {
+	return tc.windowChangeRequests
 }
 
 // loopbackPool reads trusted CAs if it finds it in a predefined location

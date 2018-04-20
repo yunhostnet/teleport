@@ -334,9 +334,9 @@ func (ns *NodeSession) updateTerminalSize(s *ssh.Session) {
 			lastSize = currSize
 
 		// Extract and store size as it comes from the remote server.
-		case l := <-ns.nodeClient.TC.SessionEventCh():
-			lastSize = l.TerminalParams.Winsize()
-			log.Debugf("Recevied windw size %v from node.\n", lastSize)
+		case wc := <-ns.nodeClient.TC.WindowChangeRequests():
+			lastSize = wc.TerminalParams.Winsize()
+			log.Debugf("Recevied window size %v from node in session.\n", lastSize, wc.SessionID)
 
 		// Update size of local terminal with the last size received from remote server.
 		case <-tickerCh.C:

@@ -18,7 +18,6 @@ package srv
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -284,17 +283,23 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 			continue
 		}
 
-		sessionChange, err := json.Marshal(rsession.Session{
-			ID:             sid,
-			Namespace:      s.srv.GetNamespace(),
+		// Create and serialize message to be sent to client.
+		wc := rsession.WindowChangeRequest{
+			SessionID:      sid.String(),
+			Time:           time.Now(),
 			TerminalParams: params,
-		})
+		}
+		wcMessage, err := wc.Serialize()
 		if err != nil {
-			s.log.Warnf("Unable to update %v about updated session: %v", p, err)
+			s.log.Warnf("Unable to serialize window change parameters for %v: %v.", p.sconn.RemoteAddr(), err)
 			continue
 		}
-		p.sconn.SendRequest(teleport.WindowChangeRequest, false, sessionChange)
 
+		// Send the message as a global request.
+		_, _, err = p.sconn.SendRequest(teleport.WindowChangeRequest, false, wcMessage)
+		if err != nil {
+			s.log.Warnf("Unable to send window change notification to %v: %v.", p.sconn.RemoteAddr(), err)
+		}
 		s.log.Debugf("Sent %v window change notification to %v.", params, p.sconn.RemoteAddr())
 	}
 
@@ -804,7 +809,7 @@ func (s *session) activeHeartbeat() {
 	s.log.Debugf("Starting poll and sync of terminal size to all parties.")
 	defer s.log.Debugf("Stopping poll and sync of terminal size to all parties.")
 
-	tickerCh := time.NewTicker(10 * time.Second)
+	tickerCh := time.NewTicker(2 * time.Second)
 	defer tickerCh.Stop()
 
 	// Loop as long as the session is active, updating the session in the backend.
