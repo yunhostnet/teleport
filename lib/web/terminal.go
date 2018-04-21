@@ -132,6 +132,7 @@ func (t *TerminalHandler) Close() error {
 // resizePTYWindow is called when a brower resizes its window. Now the node
 // needs to be notified via SSH
 func (t *TerminalHandler) resizePTYWindow(params session.TerminalParams) error {
+	fmt.Printf("--> web/terminal: sending %v\n", params)
 	if t.sshSession == nil {
 		return nil
 	}

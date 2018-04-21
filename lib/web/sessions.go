@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -79,22 +80,29 @@ func (c *SessionContext) getTerminal(sessionID session.ID) (*TerminalHandler, er
 func (c *SessionContext) UpdateSessionTerminal(
 	siteAPI auth.ClientI, namespace string, sessionID session.ID, params session.TerminalParams) error {
 
-	// update the session size on the auth server's side
-	err := siteAPI.UpdateSession(session.UpdateRequest{
-		ID:             sessionID,
-		TerminalParams: &params,
-		Namespace:      namespace,
-	})
-	if err != nil {
-		log.Error(err)
-	}
+	//// update the session size on the auth server's side
+	//err := siteAPI.UpdateSession(session.UpdateRequest{
+	//	ID:             sessionID,
+	//	TerminalParams: &params,
+	//	Namespace:      namespace,
+	//})
+	//if err != nil {
+	//	log.Error(err)
+	//}
 	// update the server-side PTY to match the browser window size
 	term, err := c.getTerminal(sessionID)
 	if err != nil {
 		log.Error(err)
 		return trace.Wrap(err)
 	}
-	return trace.Wrap(term.resizePTYWindow(params))
+
+	fmt.Printf("--> web/sessions: %v\n", params)
+	err = term.resizePTYWindow(params)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	return nil
 }
 
 func (c *SessionContext) AddClosers(closers ...io.Closer) {

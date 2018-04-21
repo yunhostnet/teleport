@@ -280,6 +280,7 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 	for _, p := range partyMembers {
 		// Don't send the window change notification back to the originator.
 		if p.ctx.ID() == ctx.ID() {
+			fmt.Printf("--> Skipping\r\n")
 			continue
 		}
 
@@ -301,6 +302,7 @@ func (s *SessionRegistry) NotifyWinChange(params rsession.TerminalParams, ctx *S
 			s.log.Warnf("Unable to send window change notification to %v: %v.", p.sconn.RemoteAddr(), err)
 		}
 		s.log.Debugf("Sent %v window change notification to %v.", params, p.sconn.RemoteAddr())
+		fmt.Printf("Sent %v window change notification to %v.\r\n", params, p.sconn.RemoteAddr())
 	}
 
 	return nil
@@ -809,7 +811,7 @@ func (s *session) activeHeartbeat() {
 	s.log.Debugf("Starting poll and sync of terminal size to all parties.")
 	defer s.log.Debugf("Stopping poll and sync of terminal size to all parties.")
 
-	tickerCh := time.NewTicker(2 * time.Second)
+	tickerCh := time.NewTicker(defaults.TerminalSizeRefreshPeriod)
 	defer tickerCh.Stop()
 
 	// Loop as long as the session is active, updating the session in the backend.

@@ -90,7 +90,7 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 	}()
 
 	// Ticker used to send list of servers to web client periodically.
-	tickerCh := time.NewTicker(5 * time.Second)
+	tickerCh := time.NewTicker(w.pollPeriod)
 	defer tickerCh.Stop()
 
 	defer w.Close()
@@ -124,7 +124,8 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 		case <-tickerCh.C:
 			servers, err := clt.GetNodes(w.namespace)
 			if err != nil {
-				log.Error(err)
+				log.Errorf("Unable to fetch list of nodes: %v.", err)
+				continue
 			}
 
 			// Send list of server to the web client.

@@ -268,8 +268,6 @@ func partiesBucket(namespace string, id ID) []string {
 // GetSessions returns a list of active sessions. Returns an empty slice
 // if no sessions are active
 func (s *server) GetSessions(namespace string) ([]Session, error) {
-	fmt.Printf("--> GetSessions\r\n")
-
 	bucket := activeBucket(namespace)
 	out := make(Sessions, 0)
 
@@ -320,8 +318,6 @@ func (slice Sessions) Len() int {
 // GetSession returns the session by it's id. Returns NotFound if a session
 // is not found
 func (s *server) GetSession(namespace string, id ID) (*Session, error) {
-	fmt.Printf("--> GetSession\r\n")
-
 	var sess *Session
 	err := s.bk.GetJSONVal(activeBucket(namespace), string(id), &sess)
 	if err != nil {
@@ -366,8 +362,6 @@ func (s *server) CreateSession(sess Session) error {
 
 // UpdateSession updates session parameters - can mark it as inactive and update it's terminal parameters
 func (s *server) UpdateSession(req UpdateRequest) error {
-	fmt.Printf("--> UpdateSession\r\n")
-
 	lock := "sessions" + string(req.ID)
 	s.bk.AcquireLock(lock, 5*time.Second)
 	defer s.bk.ReleaseLock(lock)
