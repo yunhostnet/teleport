@@ -117,6 +117,8 @@ type TerminalHandler struct {
 	hostPort int
 	// sshClient is initialized after an SSH connection to a node is established
 	sshSession *ssh.Session
+
+	teleportClient *client.TeleportClient
 }
 
 func (t *TerminalHandler) Close() error {
@@ -132,7 +134,6 @@ func (t *TerminalHandler) Close() error {
 // resizePTYWindow is called when a brower resizes its window. Now the node
 // needs to be notified via SSH
 func (t *TerminalHandler) resizePTYWindow(params session.TerminalParams) error {
-	fmt.Printf("--> web/terminal: sending %v\n", params)
 	if t.sshSession == nil {
 		return nil
 	}
@@ -213,8 +214,7 @@ func (t *TerminalHandler) Run(w http.ResponseWriter, r *http.Request) {
 			errToTerm(err, ws)
 			return
 		}
-
-		t.ctx.tc = tc
+		t.teleportClient = tc
 
 		// this callback will execute when a shell is created, it will give
 		// us a reference to ssh.Client object

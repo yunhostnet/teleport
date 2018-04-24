@@ -652,7 +652,6 @@ func (s *Server) HandleRequest(r *ssh.Request) {
 func (s *Server) HandleNewChan(nc net.Conn, sconn *ssh.ServerConn, nch ssh.NewChannel) {
 	identityContext, err := s.authHandlers.CreateIdentityContext(sconn)
 	if err != nil {
-		//fmt.Printf("--> Unable to accept channel: %v\n", err)
 		nch.Reject(ssh.Prohibited, fmt.Sprintf("Unable to create identity from connection: %v", err))
 		return
 	}
@@ -666,7 +665,6 @@ func (s *Server) HandleNewChan(nc net.Conn, sconn *ssh.ServerConn, nch ssh.NewCh
 			ch, requests, err := nch.Accept()
 			if err != nil {
 				log.Warnf("Unable to accept channel: %v", err)
-				//fmt.Printf("--> Unable to accept channel: %v\n", err)
 				nch.Reject(ssh.ConnectionFailed, fmt.Sprintf("unable to accept channel: %v", err))
 				return
 			}
@@ -684,7 +682,6 @@ func (s *Server) HandleNewChan(nc net.Conn, sconn *ssh.ServerConn, nch ssh.NewCh
 		ch, requests, err := nch.Accept()
 		if err != nil {
 			log.Warnf("Unable to accept channel: %v", err)
-			//fmt.Printf("--> Unable to accept channel: %v\n", err)
 			nch.Reject(ssh.ConnectionFailed, fmt.Sprintf("unable to accept channel: %v", err))
 			return
 		}
@@ -694,14 +691,12 @@ func (s *Server) HandleNewChan(nc net.Conn, sconn *ssh.ServerConn, nch ssh.NewCh
 		req, err := sshutils.ParseDirectTCPIPReq(nch.ExtraData())
 		if err != nil {
 			log.Errorf("Failed to parse request data: %v, err: %v", string(nch.ExtraData()), err)
-			//fmt.Printf("--> Unable to accept channel: %v\n", err)
 			nch.Reject(ssh.UnknownChannelType, "failed to parse direct-tcpip request")
 			return
 		}
 		ch, _, err := nch.Accept()
 		if err != nil {
 			log.Warnf("Unable to accept channel: %v", err)
-			//fmt.Printf("--> Unable to accept channel: %v\n", err)
 			nch.Reject(ssh.ConnectionFailed, fmt.Sprintf("unable to accept channel: %v", err))
 			return
 		}

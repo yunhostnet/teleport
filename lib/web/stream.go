@@ -95,10 +95,15 @@ func (w *sessionStreamHandler) stream(ws *websocket.Conn) error {
 
 	defer w.Close()
 
+	c, err := w.ctx.getTerminal(w.sessionID)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
 	for {
 		select {
 		// Push the new window size to the web client.
-		case wc := <-w.ctx.tc.WindowChangeRequests():
+		case wc := <-c.teleportClient.WindowChangeRequests():
 			win := wc.TerminalParams.Winsize()
 
 			// Convert the window change request into something that looks like an

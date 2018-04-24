@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -75,28 +74,17 @@ func (c *SessionContext) getTerminal(sessionID session.ID) (*TerminalHandler, er
 	return nil, trace.NotFound("no connected streams")
 }
 
-// UpdateSessionTerminal is called when a browser window is resized and
-// we need to update PTY on the server side
-func (c *SessionContext) UpdateSessionTerminal(
-	siteAPI auth.ClientI, namespace string, sessionID session.ID, params session.TerminalParams) error {
-
-	//// update the session size on the auth server's side
-	//err := siteAPI.UpdateSession(session.UpdateRequest{
-	//	ID:             sessionID,
-	//	TerminalParams: &params,
-	//	Namespace:      namespace,
-	//})
-	//if err != nil {
-	//	log.Error(err)
-	//}
-	// update the server-side PTY to match the browser window size
-	term, err := c.getTerminal(sessionID)
+// UpdateSessionTerminal issues a "window-change" request on the terminal
+// associated with this session when the browser window has changed size.
+func (c *SessionContext) UpdateSessionTerminal(siteAPI auth.ClientI, namespace string, sid session.ID, params session.TerminalParams) error {
+	// Fetch the remote terminal in the session from the session ID.
+	term, err := c.getTerminal(sid)
 	if err != nil {
 		log.Error(err)
 		return trace.Wrap(err)
 	}
 
-	fmt.Printf("--> web/sessions: %v\n", params)
+	// Issue the "window-change" SSH request to the remote terminal.
 	err = term.resizePTYWindow(params)
 	if err != nil {
 		return trace.Wrap(err)
