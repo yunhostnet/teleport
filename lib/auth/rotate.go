@@ -115,6 +115,74 @@ type rotationReq struct {
 }
 
 // RotateCertAuthority starts or restarts certificate rotation process
+//
+// Rotation procedure description
+// ------------------------------
+//
+// Rotation procedure is based on the state machine approach.
+//
+// Here are the supported rotation states:
+//
+// * Standby - the system is in standby mode and ready to take action.
+// * In-progress - rotation is in progress.
+//
+// In-progress state is split into multiple phases and the system
+// can traverse between phases using supported transitions.
+//
+// Here are the supported phases:
+//
+//  * Standby - no action is taken.
+//
+//  * Update Clients - new CA is issued, all internal system clients
+//  have to reconnect and receive the new credentials, but all servers
+//  TLS, SSH and Proxies will still use old clients. Certs from old CA and new CA
+//  are trusted within the system. This phase is necessary so old clients
+//  can receive new credentials from the auth server. If this phase did not
+//  exist, old clients could not trust servers serving new credentials, because
+//  old clients did not receive new information yet. It is possible to transition
+//  from this phase to phase "Update servers" or "Rollback".
+//
+//  * Update Servers - all internal system components reload, and use
+//  new credentials both in the internal clients and servers, however
+// old CA issued credentials are still trusted. This is done to make it possible
+// for old components to be visible within the system. It is possible to transition
+// from this phase to "Rollback" or "Standby". When transitioning to "Standby"
+// phase, the rotation is considered completed, old CA is removed from the system
+// and components reload again, but this time they don't trust old CA any more.
+//
+//
+// * Rollback phase is used to revert any changes. When going to rollback phase
+// the newly issued CA is trusted, so components can reload and receive "old"
+// credentials, but all credentials are issued using "old" certificate authority.
+// This phase is useful when administrator makes a mistake, or there are some
+// offline components that will loose the connection in case if rotation
+// completes. It is only possible to transition from this phase to "Standby".
+// When transitioning to "Standby" phase from "Rollback" phase, all components
+// reload, but "new" CA is discarded and no longer trusted, so system
+// goes back to the original state.
+//
+//
+// Rotation modes
+// --------------
+//
+// There are two rotation modes supported - manual or automatic.
+//
+// * Manual mode allows administrators to transition between
+// phases explicitly setting a phase on every request to this method.
+// This gives admins more control over rotation schedule.
+//
+// * Automatic mode performs automatic transition between phases
+// on a given schedule. Schedule is a simple time table
+// that specifies exact date when the next phase should take place. If automatic
+// transition between any phase fails, it switches back to manual mode and stops
+// execution phases on the schedule. If schedule is not specified,
+// it will be auto generated based on "grace period" duration parameter,
+// time between all phases will be evenly split over the grace period duration.
+//
+// It is possible to switch from automatic to manual by setting the phase
+// to rollback, this action will switch mode to manual.
+//
+//
 func (a *AuthServer) RotateCertAuthority(req RotateRequest) error {
 	if err := req.CheckAndSetDefaults(a.clock); err != nil {
 		return trace.Wrap(err)
