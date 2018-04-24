@@ -437,7 +437,7 @@ func (ca *CertAuthorityV2) GetType() CertAuthType {
 }
 
 // GetClusterName returns cluster name this cert authority
-// is associated with
+// is associated with.
 func (ca *CertAuthorityV2) GetClusterName() string {
 	return ca.Spec.ClusterName
 }
@@ -752,6 +752,9 @@ func (s *RotationSchedule) CheckAndSetDefaults(clock clockwork.Clock) error {
 type CertAuthoritySpecV2 struct {
 	// Type is either user or host certificate authority
 	Type CertAuthType `json:"type"`
+	// DELETE IN(2.7.0) this field is deprecated,
+	// as resource name matches cluster name after migrations.
+	// and this property is enforced by the auth server code.
 	// ClusterName identifies cluster name this authority serves,
 	// for host authorities that means base hostname of all servers,
 	// for user authorities that means organization name

@@ -105,7 +105,12 @@ func NewAuthServer(cfg *InitConfig, opts ...AuthServerOption) (*AuthServer, erro
 	if as.clock == nil {
 		as.clock = clockwork.NewRealClock()
 	}
-	go as.runPeriodicOperations()
+	if !cfg.SkipPeriodicOperations {
+		log.Infof("Auth server is running periodic operations")
+		go as.runPeriodicOperations()
+	} else {
+		log.Infof("Auth server is skipping periodic operations")
+	}
 
 	return &as, nil
 }
@@ -153,7 +158,7 @@ func (a *AuthServer) runPeriodicOperations() {
 	// to avoid contention on the database in case if there are multiple
 	// auth servers running - so they don't compete trying
 	// to update the same resources.
-	r := rand.New(rand.NewSource(a.clock.Now().UnixNano()))
+	r := rand.New(rand.NewSource(a.GetClock().Now().UnixNano()))
 	period := defaults.HighResPollingPeriod + time.Duration(r.Intn(int(defaults.HighResPollingPeriod/time.Second)))*time.Second
 	log.Debugf("Ticking with period: %v", period)
 	ticker := time.NewTicker(period)
@@ -183,8 +188,16 @@ func (a *AuthServer) Close() error {
 	return nil
 }
 
+func (a *AuthServer) GetClock() clockwork.Clock {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	return a.clock
+}
+
 // SetClock sets clock, used in tests
 func (a *AuthServer) SetClock(clock clockwork.Clock) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
 	a.clock = clock
 }
 

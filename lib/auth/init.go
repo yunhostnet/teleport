@@ -119,6 +119,10 @@ type InitConfig struct {
 
 	// ClusterConfig holds cluster level configuration.
 	ClusterConfig services.ClusterConfig
+
+	// SkipPeriodicOperations turns off periodic operations
+	// used in tests to turn off periodc operations
+	SkipPeriodicOperations bool
 }
 
 // Init instantiates and configures an instance of AuthServer

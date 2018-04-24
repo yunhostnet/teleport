@@ -123,12 +123,13 @@ func NewTestAuthServer(cfg TestAuthServerConfig) (*TestAuthServer, error) {
 	}
 
 	srv.AuthServer, err = NewAuthServer(&InitConfig{
-		ClusterName: clusterName,
-		Backend:     srv.Backend,
-		Authority:   authority.New(),
-		Access:      access,
-		Identity:    identity,
-		AuditLog:    srv.AuditLog,
+		ClusterName:            clusterName,
+		Backend:                srv.Backend,
+		Authority:              authority.New(),
+		Access:                 access,
+		Identity:               identity,
+		AuditLog:               srv.AuditLog,
+		SkipPeriodicOperations: true,
 	})
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -488,6 +489,17 @@ func (t *TestTLSServer) ClientTLSConfig(identity TestIdentity) (*tls.Config, err
 		tlsConfig.Certificates = nil
 	}
 	return tlsConfig, nil
+}
+
+// CloneClient uses the same credentials as the passed client
+// but forces the client to be recreated
+func (t *TestTLSServer) CloneClient(clt *Client) *Client {
+	addr := []utils.NetAddr{{Addr: t.Addr().String(), AddrNetwork: t.Addr().Network()}}
+	newClient, err := NewTLSClient(addr, clt.TLSConfig())
+	if err != nil {
+		panic(err)
+	}
+	return newClient
 }
 
 // NewClient returns new client to test server authenticated with identity

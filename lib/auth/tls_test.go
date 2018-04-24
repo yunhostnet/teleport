@@ -101,6 +101,256 @@ func (s *TLSSuite) TestRemoteBuiltinRole(c *check.C) {
 	fixtures.ExpectAccessDenied(c, err)
 }
 
+// TestRemoteRotation tests remote builtin role
+// that attempts certificate authority rotation
+func (s *TLSSuite) TestRemoteRotation(c *check.C) {
+	remoteServer, err := NewTestAuthServer(TestAuthServerConfig{
+		Dir:         c.MkDir(),
+		ClusterName: "remote",
+	})
+	c.Assert(err, check.IsNil)
+
+	certPool, err := s.server.CertPool()
+	c.Assert(err, check.IsNil)
+
+	// after trust is established, things are good
+	err = s.server.AuthServer.Trust(remoteServer, nil)
+
+	remoteProxy, err := remoteServer.NewRemoteClient(
+		TestBuiltin(teleport.RoleProxy), s.server.Addr(), certPool)
+	c.Assert(err, check.IsNil)
+
+	remoteAuth, err := remoteServer.NewRemoteClient(
+		TestBuiltin(teleport.RoleAuth), s.server.Addr(), certPool)
+	c.Assert(err, check.IsNil)
+
+	// remote cluster starts rotation
+	gracePeriod := time.Hour
+	err = remoteServer.AuthServer.RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateClients,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	remoteCA, err := remoteServer.AuthServer.GetCertAuthority(services.CertAuthID{
+		DomainName: remoteServer.ClusterName,
+		Type:       services.HostCA,
+	}, false)
+	c.Assert(err, check.IsNil)
+
+	// remote proxy should be rejected when trying to rotate ca
+	// that is not associated with the remote cluster
+	clone := remoteCA.Clone()
+	clone.SetName(s.server.ClusterName())
+	err = remoteProxy.RotateExternalCertAuthority(clone)
+	fixtures.ExpectAccessDenied(c, err)
+
+	// remote proxy can't upsert the certificate authority,
+	// only to rotate it (in remote rotation only certain fields are updated)
+	err = remoteProxy.UpsertCertAuthority(remoteCA)
+	fixtures.ExpectAccessDenied(c, err)
+
+	// remote auth server will get rejected
+	err = remoteAuth.RotateExternalCertAuthority(remoteCA)
+	fixtures.ExpectAccessDenied(c, err)
+
+	// remote proxy should be able to perform remote cert authority
+	// rotation
+	err = remoteProxy.RotateExternalCertAuthority(remoteCA)
+	c.Assert(err, check.IsNil)
+
+	// newRemoteProxy should be trusted by the auth server
+	newRemoteProxy, err := remoteServer.NewRemoteClient(
+		TestBuiltin(teleport.RoleProxy), s.server.Addr(), certPool)
+	c.Assert(err, check.IsNil)
+
+	_, err = newRemoteProxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// old proxy client is still trusted
+	_, err = remoteProxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+}
+
+// TestManualRotation tests local manual rotation
+// that performs full-cycle certificate authority rotation
+func (s *TLSSuite) TestManualRotation(c *check.C) {
+	// create proxy client just for test purposes
+	proxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	// client works before rotation is initiated
+	_, err = proxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// can't jump to mid-phase
+	gracePeriod := time.Hour
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateServers,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	fixtures.ExpectBadParameter(c, err)
+
+	// starts rotation
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateClients,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// old clients should work
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// new clients work as well
+	newProxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	_, err = newProxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// can't jump to standy
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseStandby,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	fixtures.ExpectBadParameter(c, err)
+
+	// advance rotation:
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateServers,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// old clients should work
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// new clients work as well
+	_, err = s.server.CloneClient(newProxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// complete rotation
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseStandby,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// old clients should no longer work
+	// new client has to be created here to force re-create the new
+	// connection instead of re-using the one from pool
+	// this is not going to be a problem in real teleport
+	// as it reloads the full server after reload
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.ErrorMatches, ".*bad certificate.*")
+
+	// new clients work
+	_, err = s.server.CloneClient(newProxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+}
+
+// TestRollback tests local manual rotation rollback
+func (s *TLSSuite) TestRollback(c *check.C) {
+	// create proxy client just for test purposes
+	proxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	// client works before rotation is initiated
+	_, err = proxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// starts rotation
+	gracePeriod := time.Hour
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateClients,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// new clients work
+	newProxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	_, err = newProxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// advance rotation:
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateServers,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// rollback rotation
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseRollback,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// new clients work, server still accepts the creds
+	// because new clients should re-register and receive new certs
+	_, err = s.server.CloneClient(newProxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// can't jump to other phases
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseUpdateClients,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	fixtures.ExpectBadParameter(c, err)
+
+	// complete rollback
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseStandby,
+		Mode:        services.RotationModeManual,
+		privateKey:  fixtures.PEMBytes["rsa2"],
+	})
+	c.Assert(err, check.IsNil)
+
+	// clients with new creds will no longer work
+	_, err = s.server.CloneClient(newProxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.ErrorMatches, ".*bad certificate.*")
+
+	// clients with old creds will still work
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+}
+
 // TestRemoteUser tests scenario when remote user connects to the local
 // auth server and some edge cases.
 func (s *TLSSuite) TestRemoteUser(c *check.C) {
