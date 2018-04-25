@@ -149,6 +149,9 @@ type AuthServer struct {
 	events.IAuditLog
 
 	clusterName services.ClusterName
+
+	// privateKey is used in tests to use pre-generated private keys
+	privateKey []byte
 }
 
 // runPeriodicOperations runs some periodic bookkeeping operations

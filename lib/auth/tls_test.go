@@ -126,12 +126,12 @@ func (s *TLSSuite) TestRemoteRotation(c *check.C) {
 
 	// remote cluster starts rotation
 	gracePeriod := time.Hour
+	remoteServer.AuthServer.privateKey = fixtures.PEMBytes["rsa2"]
 	err = remoteServer.AuthServer.RotateCertAuthority(RotateRequest{
 		Type:        services.HostCA,
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -188,12 +188,12 @@ func (s *TLSSuite) TestManualRotation(c *check.C) {
 
 	// can't jump to mid-phase
 	gracePeriod := time.Hour
+	s.server.Auth().privateKey = fixtures.PEMBytes["rsa2"]
 	err = s.server.Auth().RotateCertAuthority(RotateRequest{
 		Type:        services.HostCA,
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateServers,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	fixtures.ExpectBadParameter(c, err)
 
@@ -203,7 +203,6 @@ func (s *TLSSuite) TestManualRotation(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -224,7 +223,6 @@ func (s *TLSSuite) TestManualRotation(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseStandby,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	fixtures.ExpectBadParameter(c, err)
 
@@ -234,7 +232,6 @@ func (s *TLSSuite) TestManualRotation(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateServers,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -252,7 +249,6 @@ func (s *TLSSuite) TestManualRotation(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseStandby,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -281,12 +277,12 @@ func (s *TLSSuite) TestRollback(c *check.C) {
 
 	// starts rotation
 	gracePeriod := time.Hour
+	s.server.Auth().privateKey = fixtures.PEMBytes["rsa2"]
 	err = s.server.Auth().RotateCertAuthority(RotateRequest{
 		Type:        services.HostCA,
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -303,7 +299,6 @@ func (s *TLSSuite) TestRollback(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateServers,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -313,7 +308,6 @@ func (s *TLSSuite) TestRollback(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseRollback,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
@@ -328,7 +322,6 @@ func (s *TLSSuite) TestRollback(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseUpdateClients,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	fixtures.ExpectBadParameter(c, err)
 
@@ -338,7 +331,6 @@ func (s *TLSSuite) TestRollback(c *check.C) {
 		GracePeriod: &gracePeriod,
 		TargetPhase: services.RotationPhaseStandby,
 		Mode:        services.RotationModeManual,
-		privateKey:  fixtures.PEMBytes["rsa2"],
 	})
 	c.Assert(err, check.IsNil)
 
