@@ -250,7 +250,7 @@ func (a *TestAuthServer) NewCertificate(identity TestIdentity) (*tls.Certificate
 
 // Clock returns clock used by auth server
 func (a *TestAuthServer) Clock() clockwork.Clock {
-	return a.AuthServer.clock
+	return a.AuthServer.GetClock()
 }
 
 // Trust adds other server host certificate authority as trusted

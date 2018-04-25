@@ -34,6 +34,7 @@ import (
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/utils"
 
+	"github.com/jonboulle/clockwork"
 	"github.com/pquerna/otp/totp"
 	"gopkg.in/check.v1"
 )
@@ -172,6 +173,84 @@ func (s *TLSSuite) TestRemoteRotation(c *check.C) {
 
 	// old proxy client is still trusted
 	_, err = remoteProxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+}
+
+// TestAutoRotation tests local automatic rotation
+func (s *TLSSuite) TestAutoRotation(c *check.C) {
+	clock := clockwork.NewFakeClockAt(time.Now())
+	s.server.Auth().SetClock(clock)
+
+	// create proxy client just for test purposes
+	proxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	// client works before rotation is initiated
+	_, err = proxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// starts rotation
+	s.server.Auth().privateKey = fixtures.PEMBytes["rsa2"]
+	gracePeriod := time.Hour
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		Mode:        services.RotationModeAuto,
+	})
+	c.Assert(err, check.IsNil)
+
+	// old clients should work
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// new clients work as well
+	newProxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	_, err = newProxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// advance rotation by clock
+	clock.Advance(gracePeriod/2 + time.Minute)
+	err = s.server.Auth().autoRotateCertAuthorities()
+	c.Assert(err, check.IsNil)
+
+	ca, err := s.server.Auth().GetCertAuthority(services.CertAuthID{
+		DomainName: s.server.ClusterName(),
+		Type:       services.HostCA,
+	}, false)
+	c.Assert(err, check.IsNil)
+	c.Assert(ca.GetRotation().Phase, check.Equals, services.RotationPhaseUpdateServers)
+
+	// old clients should work
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// new clients work as well
+	_, err = s.server.CloneClient(newProxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// complete rotation - advance rotation by clock
+	clock.Advance(gracePeriod/2 + time.Minute)
+	err = s.server.Auth().autoRotateCertAuthorities()
+	ca, err = s.server.Auth().GetCertAuthority(services.CertAuthID{
+		DomainName: s.server.ClusterName(),
+		Type:       services.HostCA,
+	}, false)
+	c.Assert(err, check.IsNil)
+	c.Assert(ca.GetRotation().Phase, check.Equals, services.RotationPhaseStandby)
+	c.Assert(err, check.IsNil)
+
+	// old clients should no longer work
+	// new client has to be created here to force re-create the new
+	// connection instead of re-using the one from pool
+	// this is not going to be a problem in real teleport
+	// as it reloads the full server after reload
+	_, err = s.server.CloneClient(proxy).GetNodes(defaults.Namespace)
+	c.Assert(err, check.ErrorMatches, ".*bad certificate.*")
+
+	// new clients work
+	_, err = s.server.CloneClient(newProxy).GetNodes(defaults.Namespace)
 	c.Assert(err, check.IsNil)
 }
 
