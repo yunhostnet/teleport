@@ -254,6 +254,57 @@ func (s *TLSSuite) TestAutoRotation(c *check.C) {
 	c.Assert(err, check.IsNil)
 }
 
+// TestAutoFallback tests local automatic rotation fallback,
+// when user intervenes with rollback and rotation gets switched
+// to manual mode
+func (s *TLSSuite) TestAutoFallback(c *check.C) {
+	clock := clockwork.NewFakeClockAt(time.Now())
+	s.server.Auth().SetClock(clock)
+
+	// create proxy client just for test purposes
+	proxy, err := s.server.NewClient(TestBuiltin(teleport.RoleProxy))
+	c.Assert(err, check.IsNil)
+
+	// client works before rotation is initiated
+	_, err = proxy.GetNodes(defaults.Namespace)
+	c.Assert(err, check.IsNil)
+
+	// starts rotation
+	s.server.Auth().privateKey = fixtures.PEMBytes["rsa2"]
+	gracePeriod := time.Hour
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		Mode:        services.RotationModeAuto,
+	})
+	c.Assert(err, check.IsNil)
+
+	ca, err := s.server.Auth().GetCertAuthority(services.CertAuthID{
+		DomainName: s.server.ClusterName(),
+		Type:       services.HostCA,
+	}, false)
+	c.Assert(err, check.IsNil)
+	c.Assert(ca.GetRotation().Phase, check.Equals, services.RotationPhaseUpdateClients)
+	c.Assert(ca.GetRotation().Mode, check.Equals, services.RotationModeAuto)
+
+	// rollback rotation
+	err = s.server.Auth().RotateCertAuthority(RotateRequest{
+		Type:        services.HostCA,
+		GracePeriod: &gracePeriod,
+		TargetPhase: services.RotationPhaseRollback,
+		Mode:        services.RotationModeManual,
+	})
+	c.Assert(err, check.IsNil)
+
+	ca, err = s.server.Auth().GetCertAuthority(services.CertAuthID{
+		DomainName: s.server.ClusterName(),
+		Type:       services.HostCA,
+	}, false)
+	c.Assert(err, check.IsNil)
+	c.Assert(ca.GetRotation().Phase, check.Equals, services.RotationPhaseRollback)
+	c.Assert(ca.GetRotation().Mode, check.Equals, services.RotationModeManual)
+}
+
 // TestManualRotation tests local manual rotation
 // that performs full-cycle certificate authority rotation
 func (s *TLSSuite) TestManualRotation(c *check.C) {
