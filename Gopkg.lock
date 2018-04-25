@@ -89,12 +89,6 @@
   revision = "fe0f26ff6d26693948ee8189aa064ee8c54141fa"
 
 [[projects]]
-  name = "github.com/cenkalti/backoff"
-  packages = ["."]
-  revision = "61153c768f31ee5f130071d08fc82b85208528de"
-  version = "v1.1.0"
-
-[[projects]]
   name = "github.com/codahale/hdrhistogram"
   packages = ["."]
   revision = "954f16e8b9ef0e5d5189456aa4c1202758e04f17"
@@ -564,9 +558,10 @@
   version = "v1.5.2"
 
 [[projects]]
+  branch = "v1"
   name = "gopkg.in/check.v1"
   packages = ["."]
-  revision = "64131543e7896d5bcc6bd5a76287eb75ea96c673"
+  revision = "20d25e2804050c1cd24a7eea1e7a6447dd0e74ec"
 
 [[projects]]
   name = "gopkg.in/yaml.v2"
@@ -581,6 +576,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "43348de969afeba8e1ab0c22221ee1a15b09c40f24aa8b7b96945a0c6bc030b3"
+  inputs-digest = "1020f5ecba2af6cbe4db6e0f02b59f35e52650164cd657989e2c32a070d8009f"
   solver-name = "gps-cdcl"
   solver-version = 1
